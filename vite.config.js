@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { VitePWA } from "vite-plugin-pwa";
 
 // Dev-server proxy: keeps API keys server-side and handles CORS. The client
 // posts to /api/* and we forward to the real services with keys from .env.
@@ -8,6 +9,10 @@ import tailwindcss from "@tailwindcss/vite";
 //   /api/usda        -> USDA FoodData Central (food search)
 //   /api/nutritionix -> Nutritionix natural-language (AI-logging fallback)
 // Open Food Facts (barcode) is called directly from the client — no key, CORS OK.
+//
+// In PRODUCTION on Cloudflare Pages this proxy does not run — the same /api/*
+// routes are served by the Pages Functions in /functions/api/*, which read the
+// keys from the Cloudflare dashboard env vars. Keep the two in sync.
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const ANTHROPIC = env.ANTHROPIC_API_KEY;
@@ -36,6 +41,45 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
+      VitePWA({
+        registerType: "autoUpdate",
+        injectRegister: "auto",
+        includeAssets: ["favicon-32.png", "apple-touch-icon.png"],
+        manifest: {
+          name: "Plately",
+          short_name: "Plately",
+          description: "Plan meals and track nutrition — log by photo, barcode, or voice.",
+          theme_color: "#143C30",
+          background_color: "#143C30",
+          display: "standalone",
+          orientation: "portrait",
+          start_url: "/",
+          scope: "/",
+          icons: [
+            { src: "pwa-192.png", sizes: "192x192", type: "image/png" },
+            { src: "pwa-512.png", sizes: "512x512", type: "image/png" },
+            { src: "maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          ],
+        },
+        workbox: {
+          globPatterns: ["**/*.{js,css,html,png,svg,woff2}"],
+          navigateFallback: "/index.html",
+          // Never let the SPA fallback or the SW swallow API calls.
+          navigateFallbackDenylist: [/^\/api\//],
+          runtimeCaching: [
+            {
+              // Barcode lookups: serve fresh, fall back to cache offline.
+              urlPattern: ({ url }) => url.origin === "https://world.openfoodfacts.org",
+              handler: "NetworkFirst",
+              options: {
+                cacheName: "off-products",
+                expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+          ],
+        },
+      }),
       {
         name: "api-proxy",
         configureServer(server) {

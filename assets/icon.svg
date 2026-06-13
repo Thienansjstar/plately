@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Full-bleed evergreen background (maskable-safe: no own rounding) -->
+  <rect width="512" height="512" fill="#143C30"/>
+
+  <!-- Plate -->
+  <circle cx="256" cy="256" r="166" fill="#1E5544"/>
+  <circle cx="256" cy="256" r="166" fill="none" stroke="#86BF3E" stroke-width="14"/>
+  <circle cx="256" cy="256" r="120" fill="none" stroke="#EAF3DA" stroke-width="6" opacity="0.25"/>
+
+  <!-- Crossed utensils, kept inside the 80% maskable safe zone -->
+  <g fill="#EAF3DA">
+    <!-- Fork (tilted left) -->
+    <g transform="rotate(-18 256 256)">
+      <rect x="246" y="250" width="20" height="132" rx="10"/>
+      <rect x="236" y="226" width="40" height="32" rx="14"/>
+      <rect x="236" y="150" width="11" height="86" rx="5.5"/>
+      <rect x="250" y="150" width="11" height="86" rx="5.5"/>
+      <rect x="264" y="150" width="11" height="86" rx="5.5"/>
+    </g>
+    <!-- Knife (tilted right) -->
+    <g transform="rotate(18 256 256)">
+      <rect x="246" y="250" width="20" height="132" rx="10"/>
+      <path d="M248 252 L248 168 Q248 138 262 134 Q270 150 268 232 L268 252 Z"/>
+    </g>
+  </g>
+</svg>
