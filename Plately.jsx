@@ -4,708 +4,49 @@ import {
   Plus, Minus, X, Search, Mic, Camera, ChevronLeft, ChevronRight, ChevronDown,
   Check, CheckCircle2, Share2, Download, Flame, Trash2, Sparkles, Loader2,
   Pencil, Users, Send, Copy, Target, User, ArrowRight, RefreshCw, Link2,
-  Clock, ScanLine, Utensils,
+  Clock, ScanLine, Utensils, LogOut,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
-import { createClient } from "@supabase/supabase-js";
 
-/* ============================================================================
-   SUPABASE — accounts + cloud sync. Configured via VITE_SUPABASE_* in .env.
-   If unset, `supabase` is null and the app runs in local-only mode (no login).
-============================================================================ */
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-
-/* ============================================================================
-   BRAND  — change these two lines to rebrand the whole app.
-   (Run a USPTO + App Store name search before you ship under any name.)
-============================================================================ */
-const BRAND = "Plately";
-const TAGLINE = "Plan it. Track it. Thrive.";
-
-/* ---- Palette (evergreen + lime energy + warm apricot for fuel) ---- */
-const C = {
-  canvas: "#F6F4EC",
-  surface: "#FFFFFF",
-  ink: "#19241E",
-  inkSoft: "#5C6B61",
-  line: "#E7E3D7",
-  ever: "#143C30",      // deep evergreen (headers / primary)
-  ever2: "#1E5544",
-  leaf: "#86BF3E",      // lime energy (accent / success)
-  leafSoft: "#EAF3DA",
-  apricot: "#EF8C4B",   // warm "fuel" accent (calories)
-  apricotSoft: "#FBE6D6",
-  protein: "#2E8B8B",   // teal
-  carbs: "#E0A93B",     // gold
-  fat: "#D86A6A",       // coral
-};
-
-const FONT = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
-
-/* ============================================================================
-   DATE HELPERS
-============================================================================ */
-const pad = (n) => String(n).padStart(2, "0");
-const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const fromISO = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
-const todayISO = () => toISO(new Date());
-const addDays = (iso, n) => { const d = fromISO(iso); d.setDate(d.getDate() + n); return toISO(d); };
-const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MO = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const niceDate = (iso) => { const d = fromISO(iso); return `${WD[d.getDay()]}, ${MO[d.getMonth()]} ${d.getDate()}`; };
-const shortDate = (iso) => { const d = fromISO(iso); return `${MO[d.getMonth()]} ${d.getDate()}`; };
-const mondayOf = (iso) => { const d = fromISO(iso); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return toISO(d); };
-const relDay = (iso) => {
-  const t = todayISO();
-  if (iso === t) return "Today";
-  if (iso === addDays(t, -1)) return "Yesterday";
-  if (iso === addDays(t, 1)) return "Tomorrow";
-  return niceDate(iso);
-};
-const mealByHour = () => {
-  const h = new Date().getHours();
-  if (h < 10.5) return "breakfast";
-  if (h < 15) return "lunch";
-  if (h < 21) return "dinner";
-  return "snack";
-};
-
-/* ============================================================================
-   SEED DATA
-============================================================================ */
-const MEALS = [
-  { key: "breakfast", label: "Breakfast", emoji: "🌅" },
-  { key: "lunch", label: "Lunch", emoji: "🥗" },
-  { key: "dinner", label: "Dinner", emoji: "🍽️" },
-  { key: "snack", label: "Snacks", emoji: "🍎" },
-];
-
-const GOAL_TAGS = ["High protein", "Low carb", "Balanced", "Vegetarian", "Quick"];
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-
-// Recipes: per-serving macros + scalable ingredients
-const RECIPES = [
-  {
-    id: "r1", name: "Greek Yogurt Power Bowl", emoji: "🥣", bg: "#EAF3DA",
-    tags: ["High protein", "Quick", "Vegetarian"], servings: 1, minutes: 5,
-    kcal: 360, protein: 28, carbs: 41, fat: 9,
-    ingredients: [
-      { name: "Greek yogurt", qty: 1, unit: "cup" },
-      { name: "Blueberries", qty: 0.5, unit: "cup" },
-      { name: "Granola", qty: 0.25, unit: "cup" },
-      { name: "Honey", qty: 1, unit: "tsp" },
-      { name: "Chia seeds", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Spoon yogurt into a bowl.", "Top with blueberries and granola.", "Drizzle honey and sprinkle chia."],
-  },
-  {
-    id: "r2", name: "Veggie Egg Scramble", emoji: "🍳", bg: "#FBE6D6",
-    tags: ["High protein", "Low carb", "Vegetarian", "Quick"], servings: 1, minutes: 12,
-    kcal: 290, protein: 21, carbs: 8, fat: 19,
-    ingredients: [
-      { name: "Eggs", qty: 3, unit: "" },
-      { name: "Spinach", qty: 1, unit: "cup" },
-      { name: "Bell pepper", qty: 0.5, unit: "" },
-      { name: "Cheddar cheese", qty: 1, unit: "slice" },
-      { name: "Olive oil", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Heat oil in a pan.", "Sauté pepper and spinach 2 min.", "Add beaten eggs; scramble.", "Fold in cheese."],
-  },
-  {
-    id: "r3", name: "Overnight Oats & Berries", emoji: "🫐", bg: "#E7EEF6",
-    tags: ["Balanced", "Vegetarian", "Quick"], servings: 1, minutes: 5,
-    kcal: 380, protein: 14, carbs: 58, fat: 11,
-    ingredients: [
-      { name: "Rolled oats", qty: 0.5, unit: "cup" },
-      { name: "Oat milk", qty: 0.75, unit: "cup" },
-      { name: "Blueberries", qty: 0.5, unit: "cup" },
-      { name: "Peanut butter", qty: 1, unit: "tbsp" },
-      { name: "Maple syrup", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Combine oats and oat milk in a jar.", "Stir in peanut butter and syrup.", "Top with berries; chill overnight."],
-  },
-  {
-    id: "r4", name: "Grilled Chicken Caesar", emoji: "🥗", bg: "#EAF3DA",
-    tags: ["High protein", "Low carb"], servings: 2, minutes: 20,
-    kcal: 420, protein: 38, carbs: 14, fat: 23,
-    ingredients: [
-      { name: "Chicken breast", qty: 300, unit: "g" },
-      { name: "Romaine lettuce", qty: 1, unit: "head" },
-      { name: "Parmesan cheese", qty: 0.25, unit: "cup" },
-      { name: "Caesar dressing", qty: 3, unit: "tbsp" },
-      { name: "Croutons", qty: 0.5, unit: "cup" },
-    ],
-    steps: ["Season and grill chicken 6 min/side.", "Chop romaine; toss with dressing.", "Slice chicken over greens.", "Top with parmesan and croutons."],
-  },
-  {
-    id: "r5", name: "Salmon Teriyaki Bowl", emoji: "🐟", bg: "#FBE6D6",
-    tags: ["Balanced", "High protein"], servings: 2, minutes: 25,
-    kcal: 520, protein: 34, carbs: 55, fat: 18,
-    ingredients: [
-      { name: "Salmon fillet", qty: 300, unit: "g" },
-      { name: "Brown rice", qty: 1, unit: "cup" },
-      { name: "Broccoli", qty: 2, unit: "cup" },
-      { name: "Teriyaki sauce", qty: 3, unit: "tbsp" },
-      { name: "Sesame seeds", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Cook rice.", "Roast salmon and broccoli 15 min at 400°F.", "Glaze salmon with teriyaki.", "Assemble bowls; top with sesame."],
-  },
-  {
-    id: "r6", name: "Black Bean Burrito Bowl", emoji: "🌯", bg: "#F3E9D9",
-    tags: ["Vegetarian", "Balanced"], servings: 2, minutes: 18,
-    kcal: 460, protein: 18, carbs: 68, fat: 13,
-    ingredients: [
-      { name: "Black beans", qty: 1, unit: "cup" },
-      { name: "Brown rice", qty: 1, unit: "cup" },
-      { name: "Corn", qty: 0.5, unit: "cup" },
-      { name: "Avocado", qty: 1, unit: "" },
-      { name: "Salsa", qty: 0.5, unit: "cup" },
-      { name: "Lime", qty: 1, unit: "" },
-    ],
-    steps: ["Warm beans and rice.", "Layer into bowls.", "Top with corn, salsa, avocado.", "Squeeze lime over the top."],
-  },
-  {
-    id: "r7", name: "Turkey & Sweet Potato Skillet", emoji: "🍠", bg: "#FBE6D6",
-    tags: ["High protein", "Balanced"], servings: 3, minutes: 25,
-    kcal: 410, protein: 32, carbs: 34, fat: 16,
-    ingredients: [
-      { name: "Ground turkey", qty: 450, unit: "g" },
-      { name: "Sweet potato", qty: 2, unit: "" },
-      { name: "Onion", qty: 1, unit: "" },
-      { name: "Spinach", qty: 2, unit: "cup" },
-      { name: "Olive oil", qty: 1, unit: "tbsp" },
-    ],
-    steps: ["Dice and sauté sweet potato 10 min.", "Add onion and turkey; brown.", "Wilt in spinach.", "Season and serve."],
-  },
-  {
-    id: "r8", name: "Lemon Garlic Shrimp Pasta", emoji: "🍤", bg: "#E7EEF6",
-    tags: ["Balanced"], servings: 2, minutes: 20,
-    kcal: 540, protein: 30, carbs: 62, fat: 18,
-    ingredients: [
-      { name: "Shrimp", qty: 300, unit: "g" },
-      { name: "Spaghetti", qty: 200, unit: "g" },
-      { name: "Garlic", qty: 3, unit: "clove" },
-      { name: "Lemon", qty: 1, unit: "" },
-      { name: "Olive oil", qty: 2, unit: "tbsp" },
-      { name: "Parsley", qty: 0.25, unit: "cup" },
-    ],
-    steps: ["Boil pasta.", "Sauté garlic in oil; add shrimp 3 min.", "Toss with pasta and lemon.", "Finish with parsley."],
-  },
-  {
-    id: "r9", name: "Tofu Veggie Stir-Fry", emoji: "🍲", bg: "#EAF3DA",
-    tags: ["Vegetarian", "Low carb"], servings: 2, minutes: 18,
-    kcal: 330, protein: 22, carbs: 22, fat: 17,
-    ingredients: [
-      { name: "Firm tofu", qty: 300, unit: "g" },
-      { name: "Broccoli", qty: 2, unit: "cup" },
-      { name: "Bell pepper", qty: 1, unit: "" },
-      { name: "Soy sauce", qty: 2, unit: "tbsp" },
-      { name: "Sesame oil", qty: 1, unit: "tbsp" },
-    ],
-    steps: ["Press and cube tofu; pan-fry until golden.", "Add vegetables; stir-fry 5 min.", "Add soy sauce and sesame oil.", "Toss and serve."],
-  },
-  {
-    id: "r10", name: "Steak & Roasted Veg", emoji: "🥩", bg: "#F3E9D9",
-    tags: ["High protein", "Low carb"], servings: 2, minutes: 30,
-    kcal: 480, protein: 40, carbs: 16, fat: 28,
-    ingredients: [
-      { name: "Sirloin steak", qty: 300, unit: "g" },
-      { name: "Asparagus", qty: 1, unit: "bunch" },
-      { name: "Cherry tomatoes", qty: 1, unit: "cup" },
-      { name: "Olive oil", qty: 1, unit: "tbsp" },
-      { name: "Garlic", qty: 2, unit: "clove" },
-    ],
-    steps: ["Roast veg with oil and garlic 18 min.", "Sear steak 4 min/side.", "Rest 5 min; slice.", "Plate with vegetables."],
-  },
-  {
-    id: "r11", name: "Vanilla Protein Smoothie", emoji: "🥤", bg: "#FBE6D6",
-    tags: ["Quick", "High protein"], servings: 1, minutes: 4,
-    kcal: 300, protein: 30, carbs: 34, fat: 5,
-    ingredients: [
-      { name: "Protein powder", qty: 1, unit: "scoop" },
-      { name: "Banana", qty: 1, unit: "" },
-      { name: "Oat milk", qty: 1, unit: "cup" },
-      { name: "Peanut butter", qty: 1, unit: "tbsp" },
-    ],
-    steps: ["Add everything to a blender.", "Blend until smooth.", "Pour and enjoy."],
-  },
-  {
-    id: "r12", name: "Chickpea Mediterranean Salad", emoji: "🥙", bg: "#EAF3DA",
-    tags: ["Vegetarian", "Balanced", "Quick"], servings: 2, minutes: 12,
-    kcal: 390, protein: 15, carbs: 44, fat: 18,
-    ingredients: [
-      { name: "Chickpeas", qty: 1, unit: "cup" },
-      { name: "Cucumber", qty: 1, unit: "" },
-      { name: "Cherry tomatoes", qty: 1, unit: "cup" },
-      { name: "Feta cheese", qty: 0.5, unit: "cup" },
-      { name: "Olive oil", qty: 2, unit: "tbsp" },
-      { name: "Lemon", qty: 1, unit: "" },
-    ],
-    steps: ["Chop cucumber and tomatoes.", "Combine with chickpeas and feta.", "Dress with oil and lemon.", "Season and toss."],
-  },
-];
-
-// Searchable food database (per listed serving)
-const FOODS = [
-  { id: "f1", name: "Egg, large", serving: "1 egg", kcal: 72, protein: 6, carbs: 0, fat: 5 },
-  { id: "f2", name: "Banana", serving: "1 medium", kcal: 105, protein: 1, carbs: 27, fat: 0 },
-  { id: "f3", name: "Apple", serving: "1 medium", kcal: 95, protein: 0, carbs: 25, fat: 0 },
-  { id: "f4", name: "Chicken breast, cooked", serving: "100 g", kcal: 165, protein: 31, carbs: 0, fat: 4 },
-  { id: "f5", name: "White rice, cooked", serving: "1 cup", kcal: 205, protein: 4, carbs: 45, fat: 0 },
-  { id: "f6", name: "Brown rice, cooked", serving: "1 cup", kcal: 218, protein: 5, carbs: 46, fat: 2 },
-  { id: "f7", name: "Rolled oats, dry", serving: "0.5 cup", kcal: 150, protein: 5, carbs: 27, fat: 3 },
-  { id: "f8", name: "Greek yogurt, plain", serving: "1 cup", kcal: 130, protein: 22, carbs: 8, fat: 0 },
-  { id: "f9", name: "Almonds", serving: "28 g", kcal: 164, protein: 6, carbs: 6, fat: 14 },
-  { id: "f10", name: "Peanut butter", serving: "1 tbsp", kcal: 94, protein: 4, carbs: 3, fat: 8 },
-  { id: "f11", name: "Whole milk", serving: "1 cup", kcal: 149, protein: 8, carbs: 12, fat: 8 },
-  { id: "f12", name: "Oat milk", serving: "1 cup", kcal: 120, protein: 3, carbs: 16, fat: 5 },
-  { id: "f13", name: "Avocado", serving: "1/2 fruit", kcal: 120, protein: 1, carbs: 6, fat: 11 },
-  { id: "f14", name: "Broccoli, cooked", serving: "1 cup", kcal: 55, protein: 4, carbs: 11, fat: 1 },
-  { id: "f15", name: "Sweet potato, baked", serving: "1 medium", kcal: 112, protein: 2, carbs: 26, fat: 0 },
-  { id: "f16", name: "Salmon, cooked", serving: "100 g", kcal: 208, protein: 22, carbs: 0, fat: 13 },
-  { id: "f17", name: "Shrimp, cooked", serving: "100 g", kcal: 99, protein: 24, carbs: 0, fat: 1 },
-  { id: "f18", name: "Firm tofu", serving: "100 g", kcal: 144, protein: 17, carbs: 3, fat: 9 },
-  { id: "f19", name: "Black beans, cooked", serving: "0.5 cup", kcal: 114, protein: 8, carbs: 20, fat: 0 },
-  { id: "f20", name: "Olive oil", serving: "1 tbsp", kcal: 119, protein: 0, carbs: 0, fat: 14 },
-  { id: "f21", name: "Bread, whole wheat", serving: "1 slice", kcal: 80, protein: 4, carbs: 14, fat: 1 },
-  { id: "f22", name: "Cheddar cheese", serving: "1 slice", kcal: 113, protein: 7, carbs: 0, fat: 9 },
-  { id: "f23", name: "Whey protein", serving: "1 scoop", kcal: 120, protein: 24, carbs: 3, fat: 1 },
-  { id: "f24", name: "Coffee, black", serving: "1 cup", kcal: 2, protein: 0, carbs: 0, fat: 0 },
-  { id: "f25", name: "Latte, whole milk", serving: "12 oz", kcal: 180, protein: 9, carbs: 15, fat: 9 },
-  { id: "f26", name: "Blueberries", serving: "0.5 cup", kcal: 42, protein: 1, carbs: 11, fat: 0 },
-  { id: "f27", name: "Spinach, raw", serving: "1 cup", kcal: 7, protein: 1, carbs: 1, fat: 0 },
-  { id: "f28", name: "Spaghetti, cooked", serving: "1 cup", kcal: 221, protein: 8, carbs: 43, fat: 1 },
-  { id: "f29", name: "Ground turkey, cooked", serving: "100 g", kcal: 203, protein: 27, carbs: 0, fat: 10 },
-  { id: "f30", name: "Sirloin steak, cooked", serving: "100 g", kcal: 244, protein: 27, carbs: 0, fat: 15 },
-];
-
-// Grocery categories
-const CAT = {
-  Produce: { emoji: "🥦", words: ["spinach", "broccoli", "banana", "berry", "blueberr", "lemon", "lime", "garlic", "onion", "pepper", "avocado", "tomato", "potato", "lettuce", "romaine", "cucumber", "asparagus", "parsley", "corn"] },
-  Protein: { emoji: "🍗", words: ["chicken", "salmon", "shrimp", "tofu", "turkey", "steak", "beef", "egg", "bean", "chickpea"] },
-  Dairy: { emoji: "🧀", words: ["yogurt", "milk", "cheese", "feta", "parmesan", "cheddar", "butter"] },
-  Pantry: { emoji: "🫙", words: ["rice", "oat", "pasta", "spaghetti", "bread", "oil", "peanut", "soy", "honey", "maple", "syrup", "granola", "chia", "sesame", "crouton", "salsa", "teriyaki", "caesar", "dressing", "powder"] },
-};
-const categoryOf = (name) => {
-  const n = name.toLowerCase();
-  for (const [cat, { words }] of Object.entries(CAT)) if (words.some((w) => n.includes(w))) return cat;
-  return "Other";
-};
-const CAT_ORDER = ["Produce", "Protein", "Dairy", "Pantry", "Other"];
-const catEmoji = (c) => (CAT[c] ? CAT[c].emoji : "🛒");
-
-// fictional delivery partners (rename / replace with real integrations when you ship)
-const PROVIDERS = [
-  { id: "carthop", name: "CartHop", emoji: "🛒" },
-  { id: "freshdash", name: "FreshDash", emoji: "🚚" },
-  { id: "pantryrun", name: "PantryRun", emoji: "🧺" },
-];
-
-/* ---- initial weight history (relative to today so it always looks current) ---- */
-const seedWeights = () => {
-  const out = [];
-  const base = 178;
-  for (let i = 28; i >= 0; i -= 4) {
-    out.push({ date: addDays(todayISO(), -i), weight: +(base - (28 - i) * 0.22 + (Math.random() - 0.5) * 0.8).toFixed(1) });
-  }
-  return out;
-};
-
-const seedDiary = () => {
-  const t = todayISO();
-  return {
-    [t]: {
-      breakfast: [
-        { id: uid(), name: "Greek yogurt, plain", qty: "1 cup", kcal: 130, protein: 22, carbs: 8, fat: 0 },
-        { id: uid(), name: "Blueberries", qty: "0.5 cup", kcal: 42, protein: 1, carbs: 11, fat: 0 },
-        { id: uid(), name: "Coffee, black", qty: "1 cup", kcal: 2, protein: 0, carbs: 0, fat: 0 },
-      ],
-      lunch: [
-        { id: uid(), name: "Grilled Chicken Caesar", qty: "1 serving", kcal: 420, protein: 38, carbs: 14, fat: 23 },
-      ],
-      dinner: [],
-      snack: [
-        { id: uid(), name: "Almonds", qty: "28 g", kcal: 164, protein: 6, carbs: 6, fat: 14 },
-      ],
-    },
-  };
-};
-
-const seedPlan = () => {
-  const t = todayISO();
-  return {
-    [t]: { breakfast: ["r1"], lunch: ["r4"], dinner: ["r5"], snack: ["r11"] },
-    [addDays(t, 1)]: { breakfast: ["r3"], lunch: ["r12"], dinner: ["r10"], snack: [] },
-    [addDays(t, 2)]: { breakfast: ["r2"], lunch: ["r6"], dinner: ["r9"], snack: [] },
-  };
-};
-
-const initialState = {
-  goals: { kcal: 2100, protein: 150, carbs: 210, fat: 65 },
-  profile: { name: "You", units: "imperial", startWeight: 178, goalWeight: 168 },
-  diary: seedDiary(),
-  plan: seedPlan(),
-  weights: seedWeights(),
-  grocery: [], // {id, name, qty, unit, checked, source}
-  connected: [], // provider ids "connected" in this demo
-};
-
-/* ============================================================================
-   PURE HELPERS
-============================================================================ */
-const sumEntries = (arr = []) =>
-  arr.reduce((a, e) => ({ kcal: a.kcal + e.kcal, protein: a.protein + e.protein, carbs: a.carbs + e.carbs, fat: a.fat + e.fat }),
-    { kcal: 0, protein: 0, carbs: 0, fat: 0 });
-
-const dayTotals = (day = {}) => {
-  const all = MEALS.flatMap((m) => day[m.key] || []);
-  return sumEntries(all);
-};
-
-const recipeToEntry = (r) => ({ id: uid(), name: r.name, qty: "1 serving", kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat });
-
-const fmtQty = (q) => {
-  if (Number.isInteger(q)) return String(q);
-  const frac = { 0.25: "¼", 0.5: "½", 0.75: "¾", 0.33: "⅓", 0.67: "⅔" };
-  const whole = Math.floor(q);
-  const rem = +(q - whole).toFixed(2);
-  if (frac[rem]) return whole ? `${whole}${frac[rem]}` : frac[rem];
-  return String(+q.toFixed(2));
-};
-
-const extractJSON = (text) => {
-  if (!text) return null;
-  let t = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const firstObj = t.indexOf("{"), firstArr = t.indexOf("[");
-  let start = -1, open = "{", close = "}";
-  if (firstArr !== -1 && (firstArr < firstObj || firstObj === -1)) { start = firstArr; open = "["; close = "]"; }
-  else if (firstObj !== -1) { start = firstObj; }
-  if (start === -1) return null;
-  let depth = 0, end = -1;
-  for (let i = start; i < t.length; i++) {
-    if (t[i] === open) depth++;
-    else if (t[i] === close) { depth--; if (depth === 0) { end = i; break; } }
-  }
-  if (end === -1) return null;
-  try { return JSON.parse(t.slice(start, end + 1)); } catch { return null; }
-};
-
-async function callClaude(userContent, system, maxTokens = 1024) {
-  // Posts to the local dev proxy (see vite.config.js), which injects the API
-  // key and the anthropic-version header server-side.
-  const res = await fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: userContent }],
-    }),
-  });
-  if (!res.ok) {
-    let msg = `Request failed (${res.status})`;
-    try {
-      const e = await res.json();
-      msg = (typeof e?.error === "string" ? e.error : e?.error?.message) || msg;
-    } catch {}
-    const err = new Error(msg);
-    err.status = res.status;
-    throw err;
-  }
-  const data = await res.json();
-  return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-}
-
-// Reads nutrition for a scanned/typed barcode from Open Food Facts (free, no key,
-// CORS-enabled). Prefers per-serving values, falls back to per-100g.
-async function lookupBarcode(code) {
-  const clean = String(code || "").replace(/\D/g, "");
-  if (!clean) { const e = new Error("empty barcode"); e.code = "empty"; throw e; }
-  const res = await fetch(
-    `https://world.openfoodfacts.org/api/v2/product/${clean}.json?fields=product_name,brands,nutriments,serving_size`
-  );
-  if (!res.ok) throw new Error(`lookup failed (${res.status})`);
-  const data = await res.json();
-  if (data.status !== 1 || !data.product) {
-    const e = new Error("not found"); e.code = "notfound"; throw e;
-  }
-  const p = data.product, n = p.nutriments || {};
-  const num = (v) => (v == null || Number.isNaN(+v) ? null : +v);
-  const hasServing = num(n["energy-kcal_serving"]) != null || num(n["proteins_serving"]) != null;
-  const pick = (base) => {
-    const sv = num(n[`${base}_serving`]);
-    if (hasServing && sv != null) return sv;
-    const hg = num(n[`${base}_100g`]);
-    return hg != null ? hg : 0;
-  };
-  const kcal = hasServing
-    ? (num(n["energy-kcal_serving"]) ?? num(n["energy-kcal_100g"]) ?? 0)
-    : (num(n["energy-kcal_100g"]) ?? 0);
-  const name = [p.brands, p.product_name].filter(Boolean).join(" — ").trim() || `Item ${clean}`;
-  return {
-    id: uid(),
-    name,
-    qty: hasServing ? (p.serving_size || "1 serving") : "per 100 g",
-    kcal: Math.max(0, Math.round(kcal)),
-    protein: Math.max(0, Math.round(pick("proteins"))),
-    carbs: Math.max(0, Math.round(pick("carbohydrates"))),
-    fat: Math.max(0, Math.round(pick("fat"))),
-    barcode: clean,
-  };
-}
-
-// Food search via USDA FoodData Central (through the dev proxy). Branded foods
-// carry per-serving labelNutrients; generic foods report per-100g foodNutrients.
-async function searchUSDA(query) {
-  const res = await fetch("/api/usda", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, pageSize: 25 }),
-  });
-  if (!res.ok) throw new Error(`USDA search failed (${res.status})`);
-  const data = await res.json();
-  const foods = Array.isArray(data.foods) ? data.foods : [];
-  const num = (v) => (v == null || Number.isNaN(+v) ? 0 : +v);
-  const byNum = (arr, ids) => {
-    const hit = (arr || []).find((n) => ids.includes(String(n.nutrientNumber)) || ids.includes(String(n.nutrientId)));
-    return hit ? num(hit.value) : 0;
-  };
-  return foods
-    .map((f) => {
-      const ln = f.labelNutrients;
-      let kcal, protein, carbs, fat, serving;
-      if (ln && (ln.calories || ln.protein)) {
-        kcal = num(ln.calories?.value);
-        protein = num(ln.protein?.value);
-        carbs = num(ln.carbohydrates?.value);
-        fat = num(ln.fat?.value);
-        serving = f.householdServingFullText || (f.servingSize ? `${f.servingSize} ${f.servingSizeUnit || ""}`.trim() : "1 serving");
-      } else {
-        kcal = byNum(f.foodNutrients, ["208", "1008"]);
-        protein = byNum(f.foodNutrients, ["203", "1003"]);
-        carbs = byNum(f.foodNutrients, ["205", "1005"]);
-        fat = byNum(f.foodNutrients, ["204", "1004"]);
-        serving = "100 g";
-      }
-      const brand = f.brandName || f.brandOwner;
-      const desc = (f.description || "").trim();
-      const niceDesc = desc ? desc.charAt(0) + desc.slice(1).toLowerCase() : "Food";
-      return {
-        id: "usda-" + (f.fdcId || uid()),
-        name: [brand, niceDesc].filter(Boolean).join(" — "),
-        serving,
-        kcal: Math.round(kcal),
-        protein: Math.round(protein),
-        carbs: Math.round(carbs),
-        fat: Math.round(fat),
-        source: "USDA",
-      };
-    })
-    .filter((f) => f.kcal || f.protein || f.carbs || f.fat);
-}
-
-// Natural-language parsing via Nutritionix (through the dev proxy) — used as a
-// fallback when the Claude estimate is unavailable or fails.
-async function parseNutritionix(text) {
-  const res = await fetch("/api/nutritionix", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: text }),
-  });
-  if (!res.ok) {
-    let msg = `Nutritionix failed (${res.status})`;
-    try { const e = await res.json(); msg = (typeof e?.error === "string" ? e.error : e?.message) || msg; } catch {}
-    const err = new Error(msg);
-    err.status = res.status;
-    throw err;
-  }
-  const data = await res.json();
-  const foods = Array.isArray(data.foods) ? data.foods : [];
-  if (!foods.length) throw new Error("no items");
-  return foods.map((f) => ({
-    id: uid(),
-    name: f.food_name ? f.food_name.charAt(0).toUpperCase() + f.food_name.slice(1) : "Item",
-    qty: `${f.serving_qty || 1} ${f.serving_unit || "serving"}`,
-    kcal: Math.max(0, Math.round(f.nf_calories || 0)),
-    protein: Math.max(0, Math.round(f.nf_protein || 0)),
-    carbs: Math.max(0, Math.round(f.nf_total_carbohydrate || 0)),
-    fat: Math.max(0, Math.round(f.nf_total_fat || 0)),
-  }));
-}
-
-/* ============================================================================
-   SMALL UI PRIMITIVES
-============================================================================ */
-const Ring = ({ size = 132, stroke = 12, pct = 0, color = C.apricot, track = "#FFFFFF33", children }) => {
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const clamped = Math.max(0, Math.min(1, pct));
-  return (
-    <div style={{ width: size, height: size, position: "relative" }}>
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
-          strokeDasharray={c} strokeDashoffset={c * (1 - clamped)} strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset .6s cubic-bezier(.4,0,.2,1)" }} />
-      </svg>
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-        {children}
-      </div>
-    </div>
-  );
-};
-
-const MacroBar = ({ label, val, goal, color }) => {
-  const pct = goal ? Math.min(1, val / goal) : 0;
-  return (
-    <div style={{ flex: 1 }}>
-      <div className="flex items-baseline justify-between" style={{ marginBottom: 4 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: C.inkSoft, letterSpacing: 0.3 }}>{label}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: C.ink, fontVariantNumeric: "tabular-nums" }}>
-          {Math.round(val)}<span style={{ color: C.inkSoft, fontWeight: 600 }}>/{goal}g</span>
-        </span>
-      </div>
-      <div style={{ height: 7, borderRadius: 99, background: C.line, overflow: "hidden" }}>
-        <div style={{ width: `${pct * 100}%`, height: "100%", background: color, borderRadius: 99, transition: "width .5s" }} />
-      </div>
-    </div>
-  );
-};
-
-const Pill = ({ active, children, onClick, color = C.ever }) => (
-  <button onClick={onClick}
-    style={{
-      padding: "7px 14px", borderRadius: 99, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap",
-      border: `1.5px solid ${active ? color : C.line}`, background: active ? color : C.surface,
-      color: active ? "#fff" : C.inkSoft, cursor: "pointer", transition: "all .15s",
-    }}>
-    {children}
-  </button>
-);
-
-const Sheet = ({ open, onClose, children, title, big }) => {
-  if (!open) return null;
-  return (
-    <div onClick={onClose}
-      style={{ position: "absolute", inset: 0, zIndex: 50, background: "rgba(20,30,24,.45)", display: "flex", alignItems: "flex-end", backdropFilter: "blur(2px)" }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{
-          background: C.canvas, width: "100%", borderTopLeftRadius: 26, borderTopRightRadius: 26,
-          maxHeight: big ? "92%" : "82%", display: "flex", flexDirection: "column",
-          boxShadow: "0 -10px 40px rgba(0,0,0,.25)", animation: "plSheet .28s cubic-bezier(.16,1,.3,1)",
-        }}>
-        <div style={{ padding: "14px 18px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{title}</div>
-          <button onClick={onClose} style={{ border: "none", background: C.surface, borderRadius: 99, width: 32, height: 32, display: "grid", placeItems: "center", cursor: "pointer", color: C.inkSoft }}>
-            <X size={18} />
-          </button>
-        </div>
-        <div style={{ overflowY: "auto", padding: "4px 18px 24px" }}>{children}</div>
-      </div>
-    </div>
-  );
-};
-
-/* ============================================================================
-   BARCODE SCANNER — live camera scan via the native BarcodeDetector API, with a
-   manual-entry fallback for browsers that don't support it (Safari/Firefox).
-============================================================================ */
-const BarcodeScanner = ({ onDetect }) => {
-  const videoRef = useRef(null);
-  const cbRef = useRef(onDetect);
-  cbRef.current = onDetect;
-  const [supported] = useState(() => typeof window !== "undefined" && "BarcodeDetector" in window);
-  const [camErr, setCamErr] = useState("");
-  const [manual, setManual] = useState("");
-
-  useEffect(() => {
-    if (!supported) return;
-    let stream, timer, stopped = false, detector, busy = false, last = null;
-    (async () => {
-      try {
-        detector = new window.BarcodeDetector({
-          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"],
-        });
-      } catch { setCamErr("Live scanning isn't available here — enter the number below."); return; }
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
-        const v = videoRef.current;
-        if (v) { v.srcObject = stream; await v.play().catch(() => {}); }
-      } catch { setCamErr("Camera unavailable — enter the barcode number below."); return; }
-      timer = setInterval(async () => {
-        if (stopped || busy) return;
-        const v = videoRef.current;
-        if (!v || v.readyState < 2) return;
-        busy = true;
-        try {
-          const codes = await detector.detect(v);
-          if (codes && codes.length) {
-            const c = codes[0].rawValue;
-            if (c && c !== last) { last = c; cbRef.current && cbRef.current(c); }
-          }
-        } catch {} finally { busy = false; }
-      }, 350);
-    })();
-    return () => {
-      stopped = true;
-      if (timer) clearInterval(timer);
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-    };
-  }, [supported]);
-
-  const submitManual = () => { if (manual.trim()) cbRef.current && cbRef.current(manual.trim()); };
-
-  return (
-    <div>
-      {supported && !camErr && (
-        <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, background: "#000", aspectRatio: "4 / 3" }}>
-          <video ref={videoRef} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
-            <div style={{ width: "78%", height: 84, border: "2px solid rgba(255,255,255,.9)", borderRadius: 12, boxShadow: "0 0 0 9999px rgba(0,0,0,.18)" }} />
-          </div>
-          <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", color: "#fff", fontSize: 12, fontWeight: 600, textShadow: "0 1px 3px rgba(0,0,0,.6)" }}>
-            Point your camera at a barcode
-          </div>
-        </div>
-      )}
-      {camErr && <div style={errBox}>{camErr}</div>}
-      {!supported && !camErr && (
-        <div style={{ ...errBox, background: C.leafSoft, color: C.ever2 }}>
-          Live camera scanning isn't supported in this browser. Type the barcode number below instead.
-        </div>
-      )}
-      <div className="flex" style={{ gap: 8, marginTop: 12 }}>
-        <input
-          value={manual}
-          onChange={(e) => setManual(e.target.value.replace(/[^\d]/g, ""))}
-          onKeyDown={(e) => e.key === "Enter" && submitManual()}
-          placeholder="Enter barcode number"
-          inputMode="numeric"
-          style={{ ...inputStyle, flex: 1 }}
-        />
-        <button onClick={submitManual} disabled={!manual.trim()} style={{ ...miniAction, flex: "0 0 auto", padding: "10px 16px", opacity: manual.trim() ? 1 : 0.5 }}>
-          <Search size={15} /> Look up
-        </button>
-      </div>
-    </div>
-  );
-};
+import { C, FONT, BRAND, TAGLINE } from "./src/lib/theme";
+import {
+  pad, toISO, fromISO, todayISO, addDays, WD, MO, niceDate, shortDate,
+  mondayOf, relDay, mealByHour, uid, sumEntries, dayTotals, recipeToEntry,
+  fmtQty, extractJSON,
+} from "./src/lib/helpers";
+import { callClaude, lookupBarcode, searchUSDA, parseNutritionix } from "./src/lib/api";
+import { supabase } from "./src/lib/supabase";
+import {
+  MEALS, GOAL_TAGS, RECIPES, FOODS, CAT, categoryOf, CAT_ORDER, catEmoji,
+  PROVIDERS, seedWeights, seedDiary, seedPlan, initialState,
+} from "./src/data/seed";
+import {
+  cardStyle, inputStyle, fieldInput, navBtn, addBtn, trashBtn, ghostBtn,
+  tagStyle, primaryBtn, secondaryBtn, miniAction, miniSolid, miniGhost,
+  rowBtn, tipStyle, errBox,
+} from "./src/styles";
+import {
+  Ring, MacroBar, Pill, MacroRow, MacroMini, QuickAction, TabBtn, Header,
+  SearchInput, Stat, SectionTitle, Field, Empty, centerFrame, Avatar,
+} from "./src/components/ui";
+import { Sheet } from "./src/components/Sheet";
+import { BarcodeScanner } from "./src/components/BarcodeScanner";
+import { AuthScreen } from "./src/components/AuthScreen";
+import { OnboardingScreen, ProfileFields, TargetPreview } from "./src/components/profile";
+import { profileDefaults, recommendedTargets, saveProfileToDB } from "./src/lib/profile";
 
 /* ============================================================================
    MAIN APP
 ============================================================================ */
 function MainApp({ session }) {
   const userId = session?.user?.id || null;
+  const email = session?.user?.email || "";
   const [state, setState] = useState(initialState);
   const [loaded, setLoaded] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [tab, setTab] = useState("today");
   const [toast, setToast] = useState(null);
 
@@ -776,11 +117,13 @@ function MainApp({ session }) {
     let cancel = false;
     const apply = (parsed) => {
       if (cancel || !parsed) return;
-      setState({ ...initialState, ...parsed });
+      // Ensure newer profile fields exist on accounts created before onboarding.
+      setState({ ...initialState, ...parsed, profile: { ...profileDefaults, ...initialState.profile, ...(parsed.profile || {}) } });
       if (parsed.goals) setGoalDraft(parsed.goals);
     };
     (async () => {
       setLoaded(false);
+      setNeedsOnboarding(false);
       try {
         const cached = localStorage.getItem(storageKey);
         if (cached) apply(JSON.parse(cached));
@@ -790,10 +133,13 @@ function MainApp({ session }) {
           const { data, error } = await supabase.from("app_state").select("data").eq("user_id", userId).maybeSingle();
           if (!cancel && !error && data?.data) {
             apply(data.data);
+            // An existing account that predates onboarding shouldn't be forced through it.
+            if (!data.data.profile?.onboarded) setNeedsOnboarding(false);
           } else if (!cancel && !error && !data) {
-            // First sign-in for this account — seed the display name from auth metadata.
+            // Brand-new account: seed the display name from signup and run onboarding.
             const nm = session?.user?.user_metadata?.name;
-            if (nm) setState((s) => ({ ...s, profile: { ...s.profile, name: nm } }));
+            setState((s) => ({ ...s, profile: { ...profileDefaults, ...s.profile, name: nm || s.profile.name } }));
+            setNeedsOnboarding(true);
           }
         } catch { /* offline — keep cached/in-memory state */ }
       }
@@ -811,6 +157,8 @@ function MainApp({ session }) {
       if (supabase && userId) {
         try {
           await supabase.from("app_state").upsert({ user_id: userId, data: state, updated_at: new Date().toISOString() });
+          // Keep the structured profiles table in sync (best-effort).
+          saveProfileToDB(userId, email, state.profile, state.goals);
         } catch { /* offline — will resync on next change */ }
       }
     }, 700);
@@ -818,6 +166,21 @@ function MainApp({ session }) {
 
   const mutate = (fn) => setState((prev) => { const next = JSON.parse(JSON.stringify(prev)); fn(next); return next; });
   const recipeById = (id) => RECIPES.find((r) => r.id === id);
+
+  /* ---- onboarding: apply the new account's info, targets, and starting weight ---- */
+  const completeOnboarding = (profilePatch, goals, startWeight) => {
+    mutate((s) => {
+      s.profile = { ...s.profile, ...profilePatch };
+      if (goals) s.goals = goals;
+      if (startWeight > 0) s.weights = [{ date: todayISO(), weight: startWeight }];
+    });
+    if (goals) setGoalDraft(goals);
+    setNeedsOnboarding(false);
+    flash(`Welcome to ${BRAND}!`);
+  };
+
+  // Merge a patch into the saved profile (used by the live profile editor).
+  const patchProfile = (patch) => mutate((s) => { s.profile = { ...s.profile, ...patch }; });
 
   /* ---- diary actions ---- */
   const ensureDay = (s, d) => { if (!s.diary[d]) s.diary[d] = { breakfast: [], lunch: [], dinner: [], snack: [] }; };
@@ -1057,7 +420,9 @@ function MainApp({ session }) {
   const openPlanPicker = (date, meal) => { setRecipeFilter("All"); setRecipeSearch(""); setModal({ type: "planpick", date, meal }); };
   const openDelivery = () => { setSyncState({ provider: null, status: "idle" }); setModal({ type: "delivery" }); };
   const openQuickAdd = () => setModal({ type: "quick" });
+  const openProfile = () => setModal({ type: "profile" });
   const closeModal = () => { setModal(null); stopVoice(); };
+  const avatarName = state.profile.name && state.profile.name !== "You" ? state.profile.name : email;
 
   const todayDiary = state.diary[selDate] || { breakfast: [], lunch: [], dinner: [], snack: [] };
   const totals = dayTotals(todayDiary);
@@ -1072,6 +437,17 @@ function MainApp({ session }) {
       <div>
         {/* evergreen hero */}
         <div style={{ background: `linear-gradient(160deg, ${C.ever} 0%, ${C.ever2} 100%)`, padding: "16px 18px 26px", color: "#fff", position: "relative" }}>
+          <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
+                {(() => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; })()}
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {state.profile.name && state.profile.name !== "You" ? state.profile.name : "Welcome back"}
+              </div>
+            </div>
+            <Avatar name={avatarName} onClick={openProfile} light size={40} />
+          </div>
           <div className="flex items-center justify-between" style={{ marginBottom: 14 }}>
             <button onClick={() => setSelDate(addDays(selDate, -1))} style={navBtn}><ChevronLeft size={20} /></button>
             <button onClick={() => setSelDate(todayISO())} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", textAlign: "center" }}>
@@ -1157,7 +533,7 @@ function MainApp({ session }) {
     }, 0);
     return (
       <div>
-        <Header title="Meal planner" subtitle={`${shortDate(weekStart)} – ${shortDate(addDays(weekStart, 6))}`} />
+        <Header title="Meal planner" subtitle={`${shortDate(weekStart)} – ${shortDate(addDays(weekStart, 6))}`} right={<Avatar name={avatarName} onClick={openProfile} />} />
         <div className="flex items-center justify-between" style={{ padding: "0 18px 12px" }}>
           <button onClick={() => setWeekStart(addDays(weekStart, -7))} style={ghostBtn}><ChevronLeft size={18} /></button>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.inkSoft }}>
@@ -1222,7 +598,7 @@ function MainApp({ session }) {
       (!q || r.name.toLowerCase().includes(q) || r.tags.join(" ").toLowerCase().includes(q)));
     return (
       <div>
-        <Header title="Recipes" subtitle="Tasty, goal-friendly meals" />
+        <Header title="Recipes" subtitle="Tasty, goal-friendly meals" right={<Avatar name={avatarName} onClick={openProfile} />} />
         <div style={{ padding: "0 18px 10px" }}>
           <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
         </div>
@@ -1262,7 +638,7 @@ function MainApp({ session }) {
     const done = state.grocery.filter((g) => g.checked).length;
     return (
       <div>
-        <Header title="Shop" subtitle={total ? `${done}/${total} gathered` : "Your grocery list"} />
+        <Header title="Shop" subtitle={total ? `${done}/${total} gathered` : "Your grocery list"} right={<Avatar name={avatarName} onClick={openProfile} />} />
         <div className="flex" style={{ gap: 8, padding: "0 18px 12px" }}>
           <input value={newItem} onChange={(e) => setNewItem(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addGrocery(newItem)}
             placeholder="Add an item…" style={{ ...inputStyle, flex: 1 }} />
@@ -1332,7 +708,7 @@ function MainApp({ session }) {
     const toGoal = +(cur - goal).toFixed(1);
     return (
       <div>
-        <Header title="Progress" subtitle="Trends & reports" />
+        <Header title="Progress" subtitle="Trends & reports" right={<Avatar name={avatarName} onClick={openProfile} />} />
         <div style={{ padding: "0 18px 24px" }}>
           {/* stat tiles */}
           <div className="flex" style={{ gap: 10, marginBottom: 14 }}>
@@ -1719,6 +1095,55 @@ function MainApp({ session }) {
     );
   };
 
+  const renderProfile = () => {
+    const targets = recommendedTargets(state.profile);
+    const applyTargets = () => {
+      if (!targets) { flash("Add your stats first"); return; }
+      mutate((s) => { s.goals = { ...targets }; });
+      setGoalDraft(targets);
+      flash("Targets updated from your stats");
+    };
+    return (
+      <Sheet open title="Profile" onClose={closeModal} big>
+        {/* identity card */}
+        <div className="flex items-center" style={{ gap: 14, ...cardStyle, padding: 16 }}>
+          <Avatar name={avatarName} size={54} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{state.profile.name || "Your profile"}</div>
+            {email && <div style={{ fontSize: 12.5, color: C.inkSoft, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</div>}
+          </div>
+        </div>
+
+        <SectionTitle>Your details</SectionTitle>
+        <div style={{ ...cardStyle, padding: 14 }}>
+          <ProfileFields value={state.profile} onChange={patchProfile} />
+        </div>
+
+        <SectionTitle>Recommended targets</SectionTitle>
+        <TargetPreview profile={state.profile} />
+        <button onClick={applyTargets} style={{ ...secondaryBtn, marginTop: 10 }} disabled={!targets}>
+          <Target size={16} /> Use these as my daily goals
+        </button>
+        <button onClick={() => { closeModal(); setModal({ type: "settings" }); }} style={{ ...secondaryBtn, marginTop: 10 }}>
+          <Settings size={16} /> Goals &amp; settings
+        </button>
+
+        {supabase && session && (
+          <>
+            <SectionTitle>Account</SectionTitle>
+            <button onClick={() => supabase.auth.signOut()}
+              style={{ ...primaryBtn, background: C.fat, marginTop: 2 }}>
+              <LogOut size={17} /> Log out
+            </button>
+            <p style={{ fontSize: 11.5, color: C.inkSoft, textAlign: "center", margin: "10px 6px 0", lineHeight: 1.5 }}>
+              Signed in as {email}. Your data is saved to your account and syncs across devices.
+            </p>
+          </>
+        )}
+      </Sheet>
+    );
+  };
+
   const renderSettings = () => {
     const macroKcal = goalDraft.protein * 4 + goalDraft.carbs * 4 + goalDraft.fat * 9;
     const setG = (k, v) => setGoalDraft({ ...goalDraft, [k]: Math.max(0, +String(v).replace(/[^\d]/g, "") || 0) });
@@ -1833,6 +1258,11 @@ function MainApp({ session }) {
     { key: "progress", label: "Progress", icon: TrendingUp },
   ];
 
+  // New accounts complete their profile before entering the app.
+  if (loaded && needsOnboarding) {
+    return <OnboardingScreen initialName={state.profile.name === "You" ? "" : state.profile.name} onComplete={completeOnboarding} />;
+  }
+
   return (
     <div style={{ display: "grid", placeItems: "center", minHeight: "100vh", background: "#E9E6DC", fontFamily: FONT, padding: 0 }}>
       <style>{`
@@ -1887,6 +1317,7 @@ function MainApp({ session }) {
         {modal?.type === "planpick" && renderPlanPick()}
         {modal?.type === "delivery" && renderDelivery()}
         {modal?.type === "settings" && renderSettings()}
+        {modal?.type === "profile" && renderProfile()}
         {modal?.type === "quick" && renderQuick()}
 
         {/* toast */}
@@ -1904,12 +1335,6 @@ function MainApp({ session }) {
    AUTH GATE — wraps the app. With Supabase configured, shows the login screen
    until there's a session. Without it, renders straight through (local mode).
 ============================================================================ */
-const centerFrame = (children) => (
-  <div style={{ display: "grid", placeItems: "center", minHeight: "100vh", background: "#E9E6DC", fontFamily: FONT }}>
-    {children}
-  </div>
-);
-
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
 
@@ -1920,198 +1345,14 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Dev aid: visit /?auth to preview the login screen even when Supabase isn't
+  // configured (the form is inert in this mode — see the guard in AuthScreen).
+  const previewAuth = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("auth");
+
   if (supabase && session === undefined) {
     return centerFrame(<Loader2 size={28} className="pl-spin" color={C.ever} />);
   }
-  if (supabase && !session) return <AuthScreen />;
+  if ((supabase && !session) || previewAuth) return <AuthScreen />;
   return <MainApp session={session} />;
 }
 
-function AuthScreen() {
-  const [mode, setMode] = useState("signin"); // signin | signup
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [info, setInfo] = useState("");
-
-  const submit = async (e) => {
-    e?.preventDefault();
-    if (!email.trim() || !pw || busy) return;
-    setBusy(true); setErr(""); setInfo("");
-    try {
-      if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password: pw,
-          options: { data: { name: name.trim() || undefined } },
-        });
-        if (error) throw error;
-        if (!data.session) setInfo("Account created. Check your email to confirm, then sign in.");
-        // If a session is returned, onAuthStateChange swaps in the app automatically.
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
-        if (error) throw error;
-      }
-    } catch (e2) {
-      setErr(e2?.message || "Something went wrong. Please try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return centerFrame(
-    <div className="pl-app" style={{ width: "100%", maxWidth: 400, padding: "0 22px" }}>
-      <style>{`@keyframes plSpin { to { transform: rotate(360deg); } } .pl-spin { animation: plSpin .8s linear infinite; }
-        .pl-app input:focus { outline: 2px solid ${C.leaf}; outline-offset: 0; }`}</style>
-
-      <div style={{ textAlign: "center", marginBottom: 22 }}>
-        <div style={{ width: 60, height: 60, borderRadius: 18, margin: "0 auto 14px", display: "grid", placeItems: "center",
-          background: `linear-gradient(150deg, ${C.ever2}, ${C.ever})`, boxShadow: "0 8px 22px rgba(20,60,48,.3)" }}>
-          <Utensils size={28} color="#fff" />
-        </div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: C.ever, letterSpacing: -0.5 }}>{BRAND}</div>
-        <div style={{ fontSize: 13.5, color: C.inkSoft, fontWeight: 600, marginTop: 2 }}>{TAGLINE}</div>
-      </div>
-
-      <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 22, padding: 22, boxShadow: "0 8px 40px rgba(20,30,24,.10)" }}>
-        <div className="flex" style={{ gap: 8, marginBottom: 18, background: C.line, padding: 4, borderRadius: 12 }}>
-          {[["signin", "Sign in"], ["signup", "Create account"]].map(([k, lbl]) => (
-            <button key={k} onClick={() => { setMode(k); setErr(""); setInfo(""); }}
-              style={{ flex: 1, padding: "9px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13.5,
-                background: mode === k ? C.surface : "transparent", color: mode === k ? C.ink : C.inkSoft, boxShadow: mode === k ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>
-              {lbl}
-            </button>
-          ))}
-        </div>
-
-        <form onSubmit={submit}>
-          {mode === "signup" && (
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name"
-              autoComplete="name" style={{ ...inputStyle, width: "100%", marginBottom: 10 }} />
-          )}
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email"
-            autoComplete="email" style={{ ...inputStyle, width: "100%", marginBottom: 10 }} />
-          <input value={pw} onChange={(e) => setPw(e.target.value)} type="password"
-            placeholder={mode === "signup" ? "Create a password (6+ characters)" : "Password"}
-            autoComplete={mode === "signup" ? "new-password" : "current-password"} style={{ ...inputStyle, width: "100%", marginBottom: 14 }} />
-          <button type="submit" disabled={busy || !email.trim() || !pw} style={{ ...primaryBtn, opacity: busy || !email.trim() || !pw ? 0.55 : 1 }}>
-            {busy ? <><Loader2 size={16} className="pl-spin" /> Please wait…</> : (mode === "signup" ? <><User size={16} /> Create account</> : <><ArrowRight size={16} /> Sign in</>)}
-          </button>
-        </form>
-
-        {err && <div style={errBox}>{err}</div>}
-        {info && <div style={{ ...errBox, background: C.leafSoft, color: C.ever2 }}>{info}</div>}
-      </div>
-
-      <p style={{ fontSize: 11.5, color: C.inkSoft, textAlign: "center", margin: "16px 6px 0", lineHeight: 1.5 }}>
-        Your data syncs securely to your account so it's available on any device.
-      </p>
-    </div>
-  );
-}
-
-/* ============================================================================
-   SUB-RENDER COMPONENTS (stateless — safe to define outside)
-============================================================================ */
-const MacroRow = ({ totals, goals, light }) => (
-  <div className="flex" style={{ gap: 10 }}>
-    <MacroMini label="Protein" val={totals.protein} goal={goals.protein} color={C.protein} light={light} />
-    <MacroMini label="Carbs" val={totals.carbs} goal={goals.carbs} color={C.carbs} light={light} />
-    <MacroMini label="Fat" val={totals.fat} goal={goals.fat} color={C.fat} light={light} />
-  </div>
-);
-const MacroMini = ({ label, val, goal, color, light }) => {
-  const pct = goal ? Math.min(1, val / goal) : 0;
-  return (
-    <div style={{ flex: 1 }}>
-      <div className="flex items-baseline justify-between" style={{ marginBottom: 4 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "rgba(255,255,255,.8)" : C.inkSoft }}>{label}</span>
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "#fff" : C.ink, fontVariantNumeric: "tabular-nums" }}>{Math.round(val)}/{goal}g</span>
-      </div>
-      <div style={{ height: 6, borderRadius: 99, background: light ? "rgba(255,255,255,.2)" : C.line, overflow: "hidden" }}>
-        <div style={{ width: `${pct * 100}%`, height: "100%", background: color, borderRadius: 99, transition: "width .5s" }} />
-      </div>
-    </div>
-  );
-};
-
-const QuickAction = ({ icon, label, sub, onClick }) => (
-  <button onClick={onClick} style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: "12px 6px", cursor: "pointer",
-    display: "flex", flexDirection: "column", alignItems: "center", gap: 4, boxShadow: "0 1px 3px rgba(20,30,24,.04)" }}>
-    <span style={{ width: 38, height: 38, borderRadius: 11, background: C.leafSoft, display: "grid", placeItems: "center", color: C.ever }}>{icon}</span>
-    <span style={{ fontSize: 12.5, fontWeight: 800, color: C.ink }}>{label}</span>
-    <span style={{ fontSize: 10, color: C.inkSoft, fontWeight: 600 }}>{sub}</span>
-  </button>
-);
-
-const TabBtn = ({ t, active, onClick }) => {
-  const Icon = t.icon;
-  return (
-    <button onClick={onClick} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "2px 0", color: active ? C.ever : "#9AA59C" }}>
-      <Icon size={21} strokeWidth={active ? 2.6 : 2} />
-      <span style={{ fontSize: 10, fontWeight: active ? 800 : 600 }}>{t.label}</span>
-    </button>
-  );
-};
-
-const Header = ({ title, subtitle }) => (
-  <div style={{ padding: "18px 18px 12px" }}>
-    <div style={{ fontSize: 24, fontWeight: 800, color: C.ink, letterSpacing: -0.4 }}>{title}</div>
-    {subtitle && <div style={{ fontSize: 13, color: C.inkSoft, fontWeight: 600, marginTop: 2 }}>{subtitle}</div>}
-  </div>
-);
-
-const SearchInput = ({ value, onChange, placeholder }) => (
-  <div style={{ position: "relative" }}>
-    <Search size={17} color="#9AA59C" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
-    <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-      style={{ width: "100%", padding: "11px 14px 11px 40px", borderRadius: 13, border: `1px solid ${C.line}`, background: C.surface, fontSize: 14, color: C.ink, fontFamily: FONT }} />
-  </div>
-);
-
-const Stat = ({ label, value, unit, accent }) => (
-  <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: "13px 10px", textAlign: "center" }}>
-    <div style={{ fontSize: 22, fontWeight: 800, color: accent || C.ink, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}<span style={{ fontSize: 12, color: C.inkSoft, fontWeight: 700 }}> {unit}</span></div>
-    <div style={{ fontSize: 11, color: C.inkSoft, fontWeight: 700, marginTop: 5, letterSpacing: 0.2 }}>{label}</div>
-  </div>
-);
-
-const SectionTitle = ({ children }) => (
-  <div style={{ fontSize: 12, fontWeight: 800, color: C.inkSoft, letterSpacing: 0.4, textTransform: "uppercase", margin: "16px 2px 8px" }}>{children}</div>
-);
-
-const Field = ({ label, suffix, children }) => (
-  <div className="flex items-center justify-between" style={{ padding: "11px 0", borderBottom: `1px solid ${C.line}` }}>
-    <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{label}</span>
-    <div className="flex items-center" style={{ gap: 6 }}>
-      {children}
-      {suffix && <span style={{ fontSize: 12, color: C.inkSoft, fontWeight: 700 }}>{suffix}</span>}
-    </div>
-  </div>
-);
-
-const Empty = ({ text }) => (
-  <div style={{ textAlign: "center", padding: "30px 20px", color: C.inkSoft, fontSize: 13.5, fontWeight: 600, lineHeight: 1.5 }}>{text}</div>
-);
-
-/* ============================================================================
-   SHARED STYLE OBJECTS
-============================================================================ */
-const cardStyle = { background: C.surface, border: `1px solid ${C.line}`, borderRadius: 18, padding: 14, marginBottom: 12, boxShadow: "0 1px 3px rgba(20,30,24,.04)" };
-const inputStyle = { padding: "10px 13px", borderRadius: 11, border: `1px solid ${C.line}`, background: C.surface, fontSize: 14, color: C.ink, fontFamily: FONT };
-const fieldInput = { width: 70, padding: "7px 10px", borderRadius: 9, border: `1px solid ${C.line}`, background: "#FAF9F3", fontSize: 14, fontWeight: 700, color: C.ink, textAlign: "right", fontFamily: FONT, fontVariantNumeric: "tabular-nums" };
-const navBtn = { background: "rgba(255,255,255,.14)", border: "none", color: "#fff", width: 34, height: 34, borderRadius: 99, display: "grid", placeItems: "center", cursor: "pointer" };
-const addBtn = { background: C.leafSoft, border: "none", width: 30, height: 30, borderRadius: 99, display: "grid", placeItems: "center", cursor: "pointer", color: C.ever, flexShrink: 0 };
-const trashBtn = { background: "none", border: "none", color: "#C2BCAD", cursor: "pointer", padding: 4, display: "grid", placeItems: "center", flexShrink: 0 };
-const ghostBtn = { background: C.surface, border: `1px solid ${C.line}`, color: C.inkSoft, width: 34, height: 34, borderRadius: 10, display: "grid", placeItems: "center", cursor: "pointer" };
-const tagStyle = { fontSize: 10.5, fontWeight: 700, color: C.ever2, background: C.leafSoft, padding: "3px 8px", borderRadius: 99 };
-const primaryBtn = { width: "100%", padding: "13px", borderRadius: 14, border: "none", background: C.ever, color: "#fff", fontWeight: 800, fontSize: 14.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 };
-const secondaryBtn = { width: "100%", padding: "12px", borderRadius: 13, border: `1.5px solid ${C.line}`, background: C.surface, color: C.ink, fontWeight: 800, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 };
-const miniAction = { flex: 1, padding: "10px", borderRadius: 12, border: `1px solid ${C.line}`, background: "#FAF9F3", color: C.ever, fontWeight: 800, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 };
-const miniSolid = { padding: "8px 14px", borderRadius: 10, border: "none", background: C.ever, color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 };
-const miniGhost = { padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.ever}`, background: "#fff", color: C.ever, fontWeight: 800, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 };
-const rowBtn = { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 4px", borderBottom: `1px solid ${C.line}`, background: "none", border: "none", borderTop: "none", borderLeft: "none", borderRight: "none", cursor: "pointer", gap: 10 };
-const tipStyle = { background: C.surface, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12, fontWeight: 700 };
-const errBox = { marginTop: 12, padding: "11px 13px", borderRadius: 12, background: C.apricotSoft, color: "#9A4A1E", fontSize: 12.5, fontWeight: 600, lineHeight: 1.4 };
