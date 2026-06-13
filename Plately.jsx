@@ -167,12 +167,17 @@ function MainApp({ session }) {
   const mutate = (fn) => setState((prev) => { const next = JSON.parse(JSON.stringify(prev)); fn(next); return next; });
   const recipeById = (id) => RECIPES.find((r) => r.id === id);
 
-  /* ---- onboarding: apply the new account's info, targets, and starting weight ---- */
+  /* ---- onboarding: apply the new account's info + targets, and start empty ---- */
   const completeOnboarding = (profilePatch, goals, startWeight) => {
     mutate((s) => {
       s.profile = { ...s.profile, ...profilePatch };
       if (goals) s.goals = goals;
-      if (startWeight > 0) s.weights = [{ date: todayISO(), weight: startWeight }];
+      // Fresh account: clear the demo seed data so they start with a clean slate.
+      s.diary = {};
+      s.plan = {};
+      s.grocery = [];
+      s.connected = [];
+      s.weights = startWeight > 0 ? [{ date: todayISO(), weight: startWeight }] : [];
     });
     if (goals) setGoalDraft(goals);
     setNeedsOnboarding(false);
