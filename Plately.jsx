@@ -100,7 +100,7 @@ function MainApp({ session }) {
     setSpBusy(true); setSpError("");
     const t = setTimeout(async () => {
       try { const r = await searchSpoonacular(recipeSearch.trim()); spCacheRef.current.set(key, r); setSpResults(r); }
-      catch (e) { setSpResults([]); setSpError(/configured/i.test(e?.message || "") ? "Recipe search needs a Spoonacular API key in .env." : "Couldn't reach the recipe database."); }
+      catch (e) { setSpResults([]); setSpError(/configured/i.test(e?.message || "") ? "Recipe search isn’t set up yet (missing Spoonacular API key on the server)." : "Couldn’t reach the recipe database. Check your connection and try again."); }
       finally { setSpBusy(false); }
     }, 400);
     return () => clearTimeout(t);
