@@ -30,8 +30,12 @@ export const sumEntries = (arr = []) =>
   arr.reduce((a, e) => ({ kcal: a.kcal + e.kcal, protein: a.protein + e.protein, carbs: a.carbs + e.carbs, fat: a.fat + e.fat }),
     { kcal: 0, protein: 0, carbs: 0, fat: 0 });
 
+// Meal slots a diary day can hold. Kept local (not imported from seed.js) to
+// avoid a circular import — helpers.js must stay dependency-free.
+export const MEAL_KEYS = ["breakfast", "lunch", "dinner", "snack"];
+
 export const dayTotals = (day = {}) => {
-  const all = MEALS.flatMap((m) => day[m.key] || []);
+  const all = MEAL_KEYS.flatMap((k) => day[k] || []);
   return sumEntries(all);
 };
 

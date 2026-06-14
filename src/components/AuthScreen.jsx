@@ -80,7 +80,15 @@ export function AuthScreen() {
         if (error) throw error;
       }
     } catch (e2) {
-      setErr(friendlyError(e2?.message));
+      const msg = e2?.message || "";
+      // If they tried to create an account that already exists, drop them onto
+      // sign-in with the email kept — far less of a dead end than an error.
+      if (mode === "signup" && (/already.*(registered|exists)/i.test(msg) || e2?.code === "user_already_exists")) {
+        setMode("signin"); setErr(""); setTried(false);
+        setInfo("You already have an account with this email — enter your password to sign in.");
+      } else {
+        setErr(friendlyError(msg));
+      }
     } finally {
       setBusy(false);
     }

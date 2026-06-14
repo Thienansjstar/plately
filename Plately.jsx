@@ -1352,12 +1352,17 @@ export default function App() {
 
   // Dev aid: visit /?auth to preview the login screen even when Supabase isn't
   // configured (the form is inert in this mode — see the guard in AuthScreen).
-  const previewAuth = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("auth");
+  const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const previewAuth = params.has("auth");
+  // Dev aid: /?onboard previews the onboarding screen without needing an account.
+  if (params.has("onboard")) return <OnboardingScreen onComplete={() => { window.location.href = "/"; }} />;
 
   if (supabase && session === undefined) {
     return centerFrame(<Loader2 size={28} className="pl-spin" color={C.ever} />);
   }
-  if ((supabase && !session) || previewAuth) return <AuthScreen />;
+  // Show the auth screen only while there's no session — so ?auth (a preview aid)
+  // doesn't trap you on the login page after you actually sign in.
+  if (!session && (supabase || previewAuth)) return <AuthScreen />;
   return <MainApp session={session} />;
 }
 
