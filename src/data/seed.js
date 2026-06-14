@@ -275,4 +275,9 @@ export const initialState = {
   weights: seedWeights(),
   grocery: [], // {id, name, qty, unit, checked, source}
   connected: [], // provider ids "connected" in this demo
+  recipes: [], // user-created recipes (merged with the seed RECIPES at runtime)
 };
+
+// Pastel card backgrounds + a starter emoji set for the recipe builder.
+export const RECIPE_BGS = ["#EAF3DA", "#FBE6D6", "#E7EEF6", "#F3E9D9", "#F0ECF6", "#E6F1EF"];
+export const RECIPE_EMOJIS = ["🍽️", "🥗", "🍳", "🥣", "🍲", "🍜", "🥙", "🌯", "🍝", "🍛", "🥘", "🍱", "🐟", "🍗", "🥩", "🍤", "🍚", "🥦", "🫐", "🥤", "🍪", "🥞"];

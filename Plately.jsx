@@ -4,7 +4,7 @@ import {
   Plus, Minus, X, Search, Mic, Camera, ChevronLeft, ChevronRight, ChevronDown,
   Check, CheckCircle2, Share2, Download, Flame, Trash2, Sparkles, Loader2,
   Pencil, Users, Send, Copy, Target, User, ArrowRight, RefreshCw, Link2,
-  Clock, ScanLine, Utensils, LogOut,
+  Clock, ScanLine, Utensils, LogOut, ChefHat, PenLine,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -21,7 +21,7 @@ import { callClaude, lookupBarcode, searchUSDA, parseNutritionix } from "./src/l
 import { supabase } from "./src/lib/supabase";
 import {
   MEALS, GOAL_TAGS, RECIPES, FOODS, CAT, categoryOf, CAT_ORDER, catEmoji,
-  PROVIDERS, seedWeights, seedDiary, seedPlan, initialState,
+  PROVIDERS, seedWeights, seedDiary, seedPlan, initialState, RECIPE_BGS, RECIPE_EMOJIS,
 } from "./src/data/seed";
 import {
   cardStyle, inputStyle, fieldInput, navBtn, addBtn, trashBtn, ghostBtn,
@@ -93,6 +93,8 @@ function MainApp({ session }) {
   const [newItem, setNewItem] = useState("");
   const [weightInput, setWeightInput] = useState("");
   const [goalDraft, setGoalDraft] = useState(state.goals);
+  const blankRecipe = () => ({ id: null, name: "", emoji: "🍽️", bg: "", tags: [], servings: 1, minutes: 15, kcal: "", protein: "", carbs: "", fat: "", ingredients: [{ name: "", qty: "", unit: "" }], steps: [""] });
+  const [recipeDraft, setRecipeDraft] = useState(blankRecipe());
   const recogRef = useRef(null);
   const fileRef = useRef(null);
   const saveTimer = useRef(null);
@@ -165,7 +167,51 @@ function MainApp({ session }) {
   }, [state, loaded, userId, storageKey]);
 
   const mutate = (fn) => setState((prev) => { const next = JSON.parse(JSON.stringify(prev)); fn(next); return next; });
-  const recipeById = (id) => RECIPES.find((r) => r.id === id);
+  // User-created recipes come first so they're easy to find; seed recipes follow.
+  const allRecipes = useMemo(() => [...(state.recipes || []), ...RECIPES], [state.recipes]);
+  const recipeById = (id) => allRecipes.find((r) => r.id === id);
+  const isCustomRecipe = (id) => (state.recipes || []).some((r) => r.id === id);
+
+  /* ---- recipe builder ---- */
+  const openRecipeBuilder = (existing) => {
+    if (existing) {
+      setRecipeDraft({
+        ...existing,
+        ingredients: existing.ingredients?.length ? existing.ingredients.map((i) => ({ name: i.name, qty: i.qty, unit: i.unit })) : [{ name: "", qty: "", unit: "" }],
+        steps: existing.steps?.length ? [...existing.steps] : [""],
+      });
+    } else setRecipeDraft(blankRecipe());
+    setModal({ type: "recipebuilder" });
+  };
+  const saveRecipe = () => {
+    const d = recipeDraft;
+    if (!d.name.trim()) return;
+    const clean = {
+      id: d.id || `u_${uid()}`,
+      name: d.name.trim(),
+      emoji: d.emoji || "🍽️",
+      bg: d.bg || RECIPE_BGS[Math.floor(Math.random() * RECIPE_BGS.length)],
+      tags: d.tags,
+      servings: Math.max(1, +d.servings || 1),
+      minutes: Math.max(0, +d.minutes || 0),
+      kcal: +d.kcal || 0, protein: +d.protein || 0, carbs: +d.carbs || 0, fat: +d.fat || 0,
+      ingredients: d.ingredients.map((i) => ({ name: i.name.trim(), qty: +i.qty || 0, unit: (i.unit || "").trim() })).filter((i) => i.name),
+      steps: d.steps.map((s) => s.trim()).filter(Boolean),
+      custom: true,
+    };
+    mutate((s) => {
+      if (!s.recipes) s.recipes = [];
+      const idx = s.recipes.findIndex((r) => r.id === clean.id);
+      if (idx >= 0) s.recipes[idx] = clean; else s.recipes.unshift(clean);
+    });
+    closeModal();
+    flash(d.id ? "Recipe updated" : "Recipe saved");
+  };
+  const deleteRecipe = (id) => {
+    mutate((s) => { s.recipes = (s.recipes || []).filter((r) => r.id !== id); });
+    closeModal();
+    flash("Recipe deleted");
+  };
 
   /* ---- onboarding: apply the new account's info + targets, and start empty ---- */
   const completeOnboarding = (profilePatch, goals, startWeight) => {
@@ -598,24 +644,31 @@ function MainApp({ session }) {
   ========================================================================= */
   const renderRecipes = () => {
     const q = recipeSearch.trim().toLowerCase();
-    const list = RECIPES.filter((r) =>
-      (recipeFilter === "All" || r.tags.includes(recipeFilter)) &&
+    const list = allRecipes.filter((r) =>
+      (recipeFilter === "All" || (recipeFilter === "My recipes" ? r.custom : r.tags.includes(recipeFilter))) &&
       (!q || r.name.toLowerCase().includes(q) || r.tags.join(" ").toLowerCase().includes(q)));
+    const hasCustom = (state.recipes || []).length > 0;
     return (
       <div>
         <Header title="Recipes" subtitle="Tasty, goal-friendly meals" right={<Avatar name={avatarName} onClick={openProfile} />} />
         <div style={{ padding: "0 18px 10px" }}>
           <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
         </div>
+        <div style={{ padding: "0 18px 12px" }}>
+          <button onClick={() => openRecipeBuilder()} style={{ ...primaryBtn }}><ChefHat size={17} /> Create your own recipe</button>
+        </div>
         <div className="flex" style={{ gap: 8, padding: "0 18px 12px", overflowX: "auto" }}>
-          {["All", ...GOAL_TAGS].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
+          {["All", ...(hasCustom ? ["My recipes"] : []), ...GOAL_TAGS].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
         </div>
         <div style={{ padding: "0 18px 24px" }}>
           {list.map((r) => (
             <button key={r.id} onClick={() => openRecipe(r.id)} style={{ ...cardStyle, width: "100%", textAlign: "left", cursor: "pointer", display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ width: 56, height: 56, borderRadius: 14, background: r.bg, display: "grid", placeItems: "center", fontSize: 28, flexShrink: 0 }}>{r.emoji}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, color: C.ink, fontSize: 15 }}>{r.name}</div>
+                <div className="flex items-center" style={{ gap: 6 }}>
+                  <div style={{ fontWeight: 800, color: C.ink, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                  {r.custom && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, color: C.ever2, background: C.leafSoft, borderRadius: 5, padding: "1px 5px", letterSpacing: 0.3 }}>YOURS</span>}
+                </div>
                 <div className="flex items-center" style={{ gap: 8, marginTop: 3 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: C.apricot, fontVariantNumeric: "tabular-nums" }}>{r.kcal} kcal</span>
                   <span style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>· {r.protein}P / {r.carbs}C / {r.fat}F</span>
@@ -1016,13 +1069,99 @@ function MainApp({ session }) {
           <button onClick={() => shareRecipe(r)} style={{ ...addBtn, width: 46, height: 46, background: C.leafSoft }}><Share2 size={18} color={C.ever} /></button>
         </div>
         <button onClick={() => { closeModal(); openPlanPicker(todayISO(), mealByHour()); }} style={{ ...secondaryBtn, marginTop: 10 }}><CalendarDays size={16} /> Add to a meal plan</button>
+        {isCustomRecipe(r.id) && (
+          <div className="flex" style={{ gap: 8, marginTop: 10 }}>
+            <button onClick={() => openRecipeBuilder(r)} style={{ ...secondaryBtn, flex: 1 }}><PenLine size={16} /> Edit</button>
+            <button onClick={() => deleteRecipe(r.id)} style={{ ...secondaryBtn, flex: 1, color: C.fat, borderColor: C.fat }}><Trash2 size={16} /> Delete</button>
+          </div>
+        )}
+      </Sheet>
+    );
+  };
+
+  const renderRecipeBuilder = () => {
+    const d = recipeDraft;
+    const upd = (patch) => setRecipeDraft({ ...d, ...patch });
+    const num = (v) => String(v).replace(/[^\d.]/g, "");
+    const toggleTag = (t) => upd({ tags: d.tags.includes(t) ? d.tags.filter((x) => x !== t) : [...d.tags, t] });
+    const setIng = (i, patch) => upd({ ingredients: d.ingredients.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+    const addIng = () => upd({ ingredients: [...d.ingredients, { name: "", qty: "", unit: "" }] });
+    const rmIng = (i) => upd({ ingredients: d.ingredients.filter((_, j) => j !== i) });
+    const setStep = (i, v) => upd({ steps: d.steps.map((x, j) => (j === i ? v : x)) });
+    const addStep = () => upd({ steps: [...d.steps, ""] });
+    const rmStep = (i) => upd({ steps: d.steps.filter((_, j) => j !== i) });
+    const canSave = d.name.trim().length > 0;
+    return (
+      <Sheet open title={d.id ? "Edit recipe" : "New recipe"} onClose={closeModal} big>
+        {/* name + emoji */}
+        <div className="flex" style={{ gap: 10, marginBottom: 12 }}>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: d.bg || C.leafSoft, display: "grid", placeItems: "center", fontSize: 30, flexShrink: 0 }}>{d.emoji}</div>
+          <input value={d.name} onChange={(e) => upd({ name: e.target.value })} placeholder="Recipe name" style={{ ...inputStyle, flex: 1 }} />
+        </div>
+        <div className="flex" style={{ gap: 6, overflowX: "auto", paddingBottom: 8, marginBottom: 4 }}>
+          {RECIPE_EMOJIS.map((em) => (
+            <button key={em} onClick={() => upd({ emoji: em })}
+              style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 10, fontSize: 20, cursor: "pointer",
+                border: `1.5px solid ${d.emoji === em ? C.ever : C.line}`, background: d.emoji === em ? C.leafSoft : C.surface }}>{em}</button>
+          ))}
+        </div>
+
+        <SectionTitle>Tags</SectionTitle>
+        <div className="flex" style={{ gap: 8, flexWrap: "wrap" }}>
+          {GOAL_TAGS.map((t) => <Pill key={t} active={d.tags.includes(t)} onClick={() => toggleTag(t)}>{t}</Pill>)}
+        </div>
+
+        <SectionTitle>Per serving</SectionTitle>
+        <div style={{ ...cardStyle }}>
+          <div className="flex" style={{ gap: 8, marginBottom: 8 }}>
+            {[["servings", "Servings"], ["minutes", "Minutes"]].map(([k, lbl]) => (
+              <div key={k} style={{ flex: 1 }}>
+                <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
+                <input value={d[k]} onChange={(e) => upd({ [k]: num(e.target.value) })} inputMode="numeric" style={{ ...inputStyle, width: "100%", textAlign: "center" }} />
+              </div>
+            ))}
+          </div>
+          <div className="flex" style={{ gap: 8 }}>
+            {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
+              <div key={k} style={{ flex: 1 }}>
+                <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
+                <input value={d[k]} onChange={(e) => upd({ [k]: num(e.target.value) })} inputMode="numeric" placeholder="0" style={{ ...inputStyle, width: "100%", textAlign: "center", padding: "8px 4px" }} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <SectionTitle>Ingredients</SectionTitle>
+        {d.ingredients.map((ing, i) => (
+          <div key={i} className="flex items-center" style={{ gap: 6, marginBottom: 8 }}>
+            <input value={ing.name} onChange={(e) => setIng(i, { name: e.target.value })} placeholder="Ingredient" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <input value={ing.qty} onChange={(e) => setIng(i, { qty: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" placeholder="Qty" style={{ ...inputStyle, width: 52, textAlign: "center", padding: "10px 4px" }} />
+            <input value={ing.unit} onChange={(e) => setIng(i, { unit: e.target.value })} placeholder="unit" style={{ ...inputStyle, width: 60, padding: "10px 6px" }} />
+            <button onClick={() => rmIng(i)} style={trashBtn}><X size={15} /></button>
+          </div>
+        ))}
+        <button onClick={addIng} style={{ ...secondaryBtn, marginTop: 2 }}><Plus size={15} /> Add ingredient</button>
+
+        <SectionTitle>Method</SectionTitle>
+        {d.steps.map((s, i) => (
+          <div key={i} className="flex items-start" style={{ gap: 8, marginBottom: 8 }}>
+            <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 99, background: C.ever, color: "#fff", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 800, marginTop: 6 }}>{i + 1}</span>
+            <textarea value={s} onChange={(e) => setStep(i, e.target.value)} rows={2} placeholder={`Step ${i + 1}`} style={{ ...inputStyle, flex: 1, minWidth: 0, resize: "none", lineHeight: 1.4 }} />
+            <button onClick={() => rmStep(i)} style={{ ...trashBtn, marginTop: 6 }}><X size={15} /></button>
+          </div>
+        ))}
+        <button onClick={addStep} style={{ ...secondaryBtn, marginTop: 2 }}><Plus size={15} /> Add step</button>
+
+        <button disabled={!canSave} onClick={saveRecipe} style={{ ...primaryBtn, marginTop: 18, opacity: canSave ? 1 : 0.45 }}>
+          <Check size={17} /> {d.id ? "Save changes" : "Save recipe"}
+        </button>
       </Sheet>
     );
   };
 
   const renderPlanPick = () => {
     const q = recipeSearch.trim().toLowerCase();
-    const list = RECIPES.filter((r) =>
+    const list = allRecipes.filter((r) =>
       (recipeFilter === "All" || r.tags.includes(recipeFilter)) &&
       (!q || r.name.toLowerCase().includes(q)));
     const mealLabel = MEALS.find((m) => m.key === modal.meal)?.label;
@@ -1319,6 +1458,7 @@ function MainApp({ session }) {
         {modal?.type === "ai" && renderAIModal()}
         {modal?.type === "scan" && renderScanModal()}
         {modal?.type === "recipe" && renderRecipeModal()}
+        {modal?.type === "recipebuilder" && renderRecipeBuilder()}
         {modal?.type === "planpick" && renderPlanPick()}
         {modal?.type === "delivery" && renderDelivery()}
         {modal?.type === "settings" && renderSettings()}
