@@ -120,6 +120,7 @@ function MainApp({ session }) {
   const [goalDraft, setGoalDraft] = useState(state.goals);
   const blankRecipe = () => ({ id: null, name: "", emoji: "🍽️", bg: "", tags: [], servings: 1, minutes: 15, kcal: "", protein: "", carbs: "", fat: "", ingredients: [{ name: "", qty: "", unit: "" }] });
   const [recipeDraft, setRecipeDraft] = useState(blankRecipe());
+  const [builderBack, setBuilderBack] = useState(null); // modal to return to after the recipe builder closes
   const [ingPickMode, setIngPickMode] = useState("search"); // search | barcode | label (ingredient picker)
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; }); // log-history calendar
   const recogRef = useRef(null);
@@ -226,7 +227,8 @@ function MainApp({ session }) {
     }, { kcal: 0, protein: 0, carbs: 0, fat: 0 });
     return { kcal: Math.round(t.kcal / s), protein: Math.round(t.protein / s), carbs: Math.round(t.carbs / s), fat: Math.round(t.fat / s) };
   };
-  const openRecipeBuilder = (existing) => {
+  const openRecipeBuilder = (existing, back = null) => {
+    setBuilderBack(back);
     if (existing) {
       setRecipeDraft({
         ...existing,
@@ -237,6 +239,8 @@ function MainApp({ session }) {
     } else setRecipeDraft(blankRecipe());
     setModal({ type: "recipebuilder" });
   };
+  // Leave the builder, returning to whatever opened it (e.g. the plan picker).
+  const closeBuilder = () => { const b = builderBack; setBuilderBack(null); setModal(b || null); };
   // Open the ingredient picker (search the food database or scan a barcode),
   // keeping the recipe draft alive so we can return to it.
   const openIngredientPick = (mode = "search") => {
@@ -280,7 +284,7 @@ function MainApp({ session }) {
       const idx = s.recipes.findIndex((r) => r.id === clean.id);
       if (idx >= 0) s.recipes[idx] = clean; else s.recipes.unshift(clean);
     });
-    closeModal();
+    closeBuilder();
     flash(d.id ? "Recipe updated" : "Recipe saved");
   };
   const deleteRecipe = (id) => {
@@ -905,6 +909,13 @@ function MainApp({ session }) {
           <button onClick={() => addGrocery(newItem)} style={{ ...addBtn, width: 40, height: 40, background: C.ever }}><Plus size={18} color="#fff" /></button>
         </div>
 
+        {total > 0 && (
+          <div style={{ padding: "0 18px 12px" }}>
+            <button onClick={buildGroceryFromWeek} style={secondaryBtn}><RefreshCw size={16} /> Refresh from this week’s plan</button>
+            <p style={{ fontSize: 11, color: C.inkSoft, fontWeight: 600, margin: "6px 2px 0", lineHeight: 1.4 }}>Rebuilds plan items from your week; your manually-added items are kept.</p>
+          </div>
+        )}
+
         {!total && (
           <div style={{ padding: "0 18px" }}>
             <Empty text="Nothing here yet. Plan some meals, then build your list — or add items above." />
@@ -1313,7 +1324,7 @@ function MainApp({ session }) {
     const autoMacros = anyIngMacros(d.ingredients);
     const perServing = macrosFromIngredients(d.ingredients, d.servings);
     return (
-      <Sheet open title={d.id ? "Edit recipe" : "New recipe"} onClose={closeModal} big>
+      <Sheet open title={d.id ? "Edit recipe" : "New recipe"} onClose={closeBuilder} big>
         {/* name + emoji */}
         <div className="flex" style={{ gap: 10, marginBottom: 12 }}>
           <div style={{ width: 56, height: 56, borderRadius: 14, background: d.bg || C.leafSoft, display: "grid", placeItems: "center", fontSize: 30, flexShrink: 0 }}>{d.emoji}</div>
@@ -1564,16 +1575,27 @@ function MainApp({ session }) {
   const renderPlanPick = () => {
     const q = recipeSearch.trim().toLowerCase();
     const customMatches = (state.recipes || []).filter((r) => !q || r.name.toLowerCase().includes(q));
-    const list = [...customMatches, ...spResults];
+    const recents = (state.recipeCache || []).filter((r) => (!q || r.name.toLowerCase().includes(q)) && !customMatches.some((c) => c.id === r.id));
+    const recentIds = new Set(recents.map((r) => r.id));
+    const popular = spResults.filter((r) => !recentIds.has(r.id) && !customMatches.some((c) => c.id === r.id));
     const mealLabel = MEALS.find((m) => m.key === modal.meal)?.label;
+    const pick = (r) => { addToPlan(modal.date, modal.meal, r.id); flash(`Added ${r.name} to plan`); closeModal(); };
+    const header = (t) => <div style={{ fontSize: 11, fontWeight: 800, color: C.inkSoft, letterSpacing: 0.3, margin: "8px 2px 8px" }}>{t}</div>;
+    const nothing = !customMatches.length && !recents.length && !popular.length;
     return (
       <Sheet open title={`Add to ${mealLabel} · ${relDay(modal.date)}`} onClose={closeModal} big>
         <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
-        <div style={{ marginTop: 10 }}>
-          {list.map((r) => recipeRow(r, () => { addToPlan(modal.date, modal.meal, r.id); flash(`Added ${r.name} to plan`); closeModal(); }))}
+        <button onClick={() => openRecipeBuilder(null, { type: "planpick", date: modal.date, meal: modal.meal })} style={{ ...secondaryBtn, marginTop: 10 }}><ChefHat size={16} /> Create your own recipe</button>
+        <div style={{ marginTop: 6 }}>
+          {customMatches.length > 0 && (recents.length + popular.length > 0) && header("MY RECIPES")}
+          {customMatches.map((r) => recipeRow(r, () => pick(r)))}
+          {recents.length > 0 && header("RECENTLY USED")}
+          {recents.map((r) => recipeRow(r, () => pick(r)))}
+          {popular.length > 0 && header(q ? "RESULTS" : "POPULAR")}
+          {popular.map((r) => recipeRow(r, () => pick(r)))}
           {spBusy && <div className="flex items-center" style={{ gap: 8, padding: "12px 4px", color: C.inkSoft, fontSize: 13, fontWeight: 600 }}><Loader2 size={16} className="pl-spin" /> Searching recipes…</div>}
           {spError && <div style={errBox}>{spError}</div>}
-          {!spBusy && !list.length && !spError && <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No recipes found.</div>}
+          {!spBusy && nothing && !spError && <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No recipes found.</div>}
         </div>
       </Sheet>
     );
