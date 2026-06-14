@@ -57,6 +57,8 @@ function MainApp({ session }) {
   // Recipes
   const [recipeFilter, setRecipeFilter] = useState("All");
   const [recipeSearch, setRecipeSearch] = useState("");
+  const [logDraft, setLogDraft] = useState(null); // { date, meal, name, unit, kcal, protein, carbs, fat, servings, kind, source, back }
+  const [scanServings, setScanServings] = useState(1);
 
   // modal: { type, ... }
   const [modal, setModal] = useState(null);
@@ -69,7 +71,7 @@ function MainApp({ session }) {
 
   // Debounced USDA FoodData Central search while the Add modal is open.
   useEffect(() => {
-    if (modal?.type !== "add") return;
+    if (modal?.type !== "add" && modal?.type !== "ingredientpick") return;
     const q = foodSearch.trim();
     if (q.length < 2) { setFoodResults([]); setFoodBusy(false); return; }
     setFoodBusy(true);
@@ -93,8 +95,10 @@ function MainApp({ session }) {
   const [newItem, setNewItem] = useState("");
   const [weightInput, setWeightInput] = useState("");
   const [goalDraft, setGoalDraft] = useState(state.goals);
-  const blankRecipe = () => ({ id: null, name: "", emoji: "🍽️", bg: "", tags: [], servings: 1, minutes: 15, kcal: "", protein: "", carbs: "", fat: "", ingredients: [{ name: "", qty: "", unit: "" }], steps: [""] });
+  const blankRecipe = () => ({ id: null, name: "", emoji: "🍽️", bg: "", tags: [], servings: 1, minutes: 15, kcal: "", protein: "", carbs: "", fat: "", ingredients: [{ name: "", qty: "", unit: "" }] });
   const [recipeDraft, setRecipeDraft] = useState(blankRecipe());
+  const [ingPickMode, setIngPickMode] = useState("search"); // search | barcode | label (ingredient picker)
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; }); // log-history calendar
   const recogRef = useRef(null);
   const fileRef = useRef(null);
   const saveTimer = useRef(null);
@@ -173,19 +177,58 @@ function MainApp({ session }) {
   const isCustomRecipe = (id) => (state.recipes || []).some((r) => r.id === id);
 
   /* ---- recipe builder ---- */
+  // An ingredient added from the database/scan carries per-unit macros + a qty
+  // multiplier; the recipe's per-serving macros are then summed automatically.
+  const ingHasMacros = (i) => (+i.kcal || 0) || (+i.protein || 0) || (+i.carbs || 0) || (+i.fat || 0);
+  const anyIngMacros = (ings) => (ings || []).some(ingHasMacros);
+  const macrosFromIngredients = (ings, servings) => {
+    const s = Math.max(1, +servings || 1);
+    const t = (ings || []).reduce((a, i) => {
+      const q = +i.qty || 0;
+      return {
+        kcal: a.kcal + (+i.kcal || 0) * q, protein: a.protein + (+i.protein || 0) * q,
+        carbs: a.carbs + (+i.carbs || 0) * q, fat: a.fat + (+i.fat || 0) * q,
+      };
+    }, { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+    return { kcal: Math.round(t.kcal / s), protein: Math.round(t.protein / s), carbs: Math.round(t.carbs / s), fat: Math.round(t.fat / s) };
+  };
   const openRecipeBuilder = (existing) => {
     if (existing) {
       setRecipeDraft({
         ...existing,
-        ingredients: existing.ingredients?.length ? existing.ingredients.map((i) => ({ name: i.name, qty: i.qty, unit: i.unit })) : [{ name: "", qty: "", unit: "" }],
-        steps: existing.steps?.length ? [...existing.steps] : [""],
+        ingredients: existing.ingredients?.length
+          ? existing.ingredients.map((i) => ({ name: i.name, qty: i.qty, unit: i.unit, kcal: i.kcal || 0, protein: i.protein || 0, carbs: i.carbs || 0, fat: i.fat || 0 }))
+          : [{ name: "", qty: "", unit: "" }],
       });
     } else setRecipeDraft(blankRecipe());
     setModal({ type: "recipebuilder" });
   };
+  // Open the ingredient picker (search the food database or scan a barcode),
+  // keeping the recipe draft alive so we can return to it.
+  const openIngredientPick = (mode = "search") => {
+    setFoodSearch(""); setFoodResults([]); setScanResult(null); setScanError(""); setScanBusy(false); setScanImg(null);
+    if (mode === "label") setScanMode("product");
+    setIngPickMode(mode); setModal({ type: "ingredientpick" });
+  };
+  // Append a picked food/scan result as a macro-tracked ingredient, then return
+  // to the builder. `f` may come from FOODS/USDA (`serving`) or a scan (`qty`).
+  const addIngredientFromFood = (f) => {
+    setRecipeDraft((d) => ({
+      ...d,
+      ingredients: [
+        ...d.ingredients.filter((i) => i.name.trim() || ingHasMacros(i)),
+        { name: f.name, qty: 1, unit: f.serving || f.qty || "serving", kcal: +f.kcal || 0, protein: +f.protein || 0, carbs: +f.carbs || 0, fat: +f.fat || 0 },
+      ],
+    }));
+    setModal({ type: "recipebuilder" });
+    flash(`Added ${f.name}`);
+  };
   const saveRecipe = () => {
     const d = recipeDraft;
     if (!d.name.trim()) return;
+    const macros = anyIngMacros(d.ingredients)
+      ? macrosFromIngredients(d.ingredients, d.servings)
+      : { kcal: +d.kcal || 0, protein: +d.protein || 0, carbs: +d.carbs || 0, fat: +d.fat || 0 };
     const clean = {
       id: d.id || `u_${uid()}`,
       name: d.name.trim(),
@@ -194,9 +237,8 @@ function MainApp({ session }) {
       tags: d.tags,
       servings: Math.max(1, +d.servings || 1),
       minutes: Math.max(0, +d.minutes || 0),
-      kcal: +d.kcal || 0, protein: +d.protein || 0, carbs: +d.carbs || 0, fat: +d.fat || 0,
-      ingredients: d.ingredients.map((i) => ({ name: i.name.trim(), qty: +i.qty || 0, unit: (i.unit || "").trim() })).filter((i) => i.name),
-      steps: d.steps.map((s) => s.trim()).filter(Boolean),
+      ...macros,
+      ingredients: d.ingredients.map((i) => ({ name: i.name.trim(), qty: +i.qty || 0, unit: (i.unit || "").trim(), kcal: +i.kcal || 0, protein: +i.protein || 0, carbs: +i.carbs || 0, fat: +i.fat || 0 })).filter((i) => i.name),
       custom: true,
     };
     mutate((s) => {
@@ -236,6 +278,13 @@ function MainApp({ session }) {
   /* ---- diary actions ---- */
   const ensureDay = (s, d) => { if (!s.diary[d]) s.diary[d] = { breakfast: [], lunch: [], dinner: [], snack: [] }; };
   const addEntry = (date, meal, entry) => mutate((s) => { ensureDay(s, date); s.diary[date][meal].push({ ...entry, id: uid() }); });
+  // Remember a food picked from search so it surfaces at the top next time
+  // (most-recent first, deduped by name, capped).
+  const recordRecentFood = (f) => mutate((s) => {
+    const item = { id: f.id || `r_${uid()}`, name: f.name, serving: f.serving || f.qty || "1 serving", kcal: f.kcal || 0, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0, source: f.source };
+    const rest = (s.recentFoods || []).filter((x) => x.name.toLowerCase() !== item.name.toLowerCase());
+    s.recentFoods = [item, ...rest].slice(0, 12);
+  });
   const removeEntry = (date, meal, id) => mutate((s) => { ensureDay(s, date); s.diary[date][meal] = s.diary[date][meal].filter((e) => e.id !== id); });
 
   const logPlannedDay = (date) => {
@@ -305,8 +354,7 @@ function MainApp({ session }) {
   };
   const shareRecipe = (r) => {
     const ing = r.ingredients.map((i) => `• ${fmtQty(i.qty)}${i.unit ? " " + i.unit : ""} ${i.name}`).join("\n");
-    const steps = r.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-    share(r.name, `${r.name} — via ${BRAND}\n${r.kcal} kcal · ${r.protein}P / ${r.carbs}C / ${r.fat}F per serving\n\nIngredients\n${ing}\n\nSteps\n${steps}`);
+    share(r.name, `${r.name} — via ${BRAND}\n${r.kcal} kcal · ${r.protein}P / ${r.carbs}C / ${r.fat}F per serving\n\nIngredients\n${ing}`);
   };
   const shareGrocery = () => {
     if (!state.grocery.length) { flash("Your list is empty"); return; }
@@ -402,18 +450,22 @@ function MainApp({ session }) {
     setScanBusy(true); setScanError(""); setScanResult(null);
     try {
       const b64 = scanImg.dataUrl.split(",")[1];
-      const sys = scanMode === "product"
+      const isLabel = scanMode === "product";
+      const sys = isLabel
         ? `You read packaged-food labels. Identify the product and read its Nutrition Facts. Return ONLY JSON (no markdown): {"name": string, "qty": string (the serving size shown), "kcal": number, "protein": number, "carbs": number, "fat": number}. If the label isn't fully legible, give your best estimate.`
-        : `You estimate nutrition from a photo of a prepared meal. Identify the dish and estimate one plate/serving. Return ONLY JSON (no markdown): {"name": string, "qty": "1 serving", "kcal": number, "protein": number, "carbs": number, "fat": number}.`;
+        : `You estimate nutrition from a photo of a prepared meal. Identify the dish, estimate the size of ONE standard serving, and estimate how many servings are visible in the photo. Return ONLY JSON (no markdown): {"name": string, "serving_size": string (describe one serving with an approximate amount, e.g. "1 cup cooked (~200 g)"), "servings_in_photo": number (how many servings the photo shows, e.g. 1, 1.5, 2), "kcal": number, "protein": number, "carbs": number, "fat": number}. The kcal/protein/carbs/fat must be for ONE serving only (not the whole photo). Round to whole numbers.`;
       const txt = await callClaude(
         [
           { type: "image", source: { type: "base64", media_type: scanImg.media, data: b64 } },
-          { type: "text", text: scanMode === "product" ? "Read this product label and return the JSON." : "Identify this meal and return the JSON." },
+          { type: "text", text: isLabel ? "Read this product label and return the JSON." : "Identify this meal, the serving size, and how many servings are shown. Return the JSON." },
         ], sys, 700);
       const p = extractJSON(txt);
       if (!p || typeof p !== "object") throw new Error("parse");
+      const servingsInPhoto = isLabel ? 1 : Math.max(0.5, Math.round((+p.servings_in_photo || 1) * 2) / 2);
+      setScanServings(servingsInPhoto);
       setScanResult({
-        id: uid(), name: String(p.name || "Scanned item"), qty: String(p.qty || "1 serving"),
+        id: uid(), name: String(p.name || "Scanned item"),
+        qty: String((isLabel ? p.qty : p.serving_size) || "1 serving"),
         kcal: Math.max(0, Math.round(+p.kcal || 0)), protein: Math.max(0, Math.round(+p.protein || 0)),
         carbs: Math.max(0, Math.round(+p.carbs || 0)), fat: Math.max(0, Math.round(+p.fat || 0)),
       });
@@ -432,6 +484,7 @@ function MainApp({ session }) {
     setScanBusy(true); setScanError("");
     try {
       const result = await lookupBarcode(code);
+      setScanServings(1);
       setScanResult(result);
     } catch (e) {
       if (e?.code === "notfound") {
@@ -445,7 +498,14 @@ function MainApp({ session }) {
   };
   const commitScan = () => {
     const { date, meal } = modal;
-    addEntry(date, meal, scanResult);
+    const s = Math.max(0.5, scanServings || 1);
+    const entry = s === 1 ? scanResult : {
+      ...scanResult,
+      qty: `${fmtServ(s)} × ${scanResult.qty}`,
+      kcal: Math.round(scanResult.kcal * s), protein: Math.round(scanResult.protein * s),
+      carbs: Math.round(scanResult.carbs * s), fat: Math.round(scanResult.fat * s),
+    };
+    addEntry(date, meal, entry);
     closeModal(); flash("Logged from scan");
   };
 
@@ -466,18 +526,58 @@ function MainApp({ session }) {
   /* ---- modal helpers ---- */
   const openAdd = (date, meal) => { setFoodSearch(""); setManual({ name: "", qty: "1 serving", kcal: "", protein: "", carbs: "", fat: "" }); setModal({ type: "add", date, meal }); };
   const openAI = (date, meal) => { setAiText(""); setAiResults(null); setAiError(""); setModal({ type: "ai", date, meal }); };
-  const openScan = (date, meal) => { setScanImg(null); setScanResult(null); setScanError(""); setScanMode("meal"); setModal({ type: "scan", date, meal }); };
+  const openScan = (date, meal) => { setScanImg(null); setScanResult(null); setScanError(""); setScanMode("meal"); setScanServings(1); setModal({ type: "scan", date, meal }); };
   const openRecipe = (id) => setModal({ type: "recipe", id });
   const openPlanPicker = (date, meal) => { setRecipeFilter("All"); setRecipeSearch(""); setModal({ type: "planpick", date, meal }); };
+  const openRecipeLog = (date, meal) => { setRecipeFilter("All"); setRecipeSearch(""); setModal({ type: "recipelog", date, meal }); };
+  // Universal "log with servings" confirm step. `item` carries per-serving macros;
+  // `back` is the modal to return to (so list flows keep going).
+  const openLogItem = (date, meal, item, kind, back = null) => {
+    setLogDraft({
+      date, meal, kind, back, name: item.name, unit: item.serving || item.qty || "1 serving", source: item.source,
+      kcal: +item.kcal || 0, protein: +item.protein || 0, carbs: +item.carbs || 0, fat: +item.fat || 0, servings: 1,
+    });
+    setModal({ type: "logitem" });
+  };
+  const fmtServ = (n) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
+  // − / value / + control for choosing how many servings to log (0.5 steps).
+  const servingStepper = (value, setValue) => {
+    const set = (v) => setValue(Math.max(0.5, Math.round(v * 2) / 2));
+    return (
+      <div className="flex items-center justify-center" style={{ gap: 12 }}>
+        <button onClick={() => set(value - 0.5)} style={{ ...addBtn, width: 42, height: 42, background: C.leafSoft }}><Minus size={18} color={C.ever} /></button>
+        <input value={value} onChange={(e) => { const raw = e.target.value.replace(/[^\d.]/g, ""); setValue(raw === "" ? 1 : +raw); }}
+          inputMode="decimal" style={{ ...inputStyle, width: 72, textAlign: "center", fontSize: 19, fontWeight: 800, padding: "8px 4px" }} />
+        <button onClick={() => set(value + 0.5)} style={{ ...addBtn, width: 42, height: 42, background: C.leafSoft }}><Plus size={18} color={C.ever} /></button>
+      </div>
+    );
+  };
   const openDelivery = () => { setSyncState({ provider: null, status: "idle" }); setModal({ type: "delivery" }); };
   const openQuickAdd = () => setModal({ type: "quick" });
   const openProfile = () => setModal({ type: "profile" });
+  const openLogCalendar = () => { const d = new Date(); setCalMonth({ y: d.getFullYear(), m: d.getMonth() }); setModal({ type: "logcal" }); };
   const closeModal = () => { setModal(null); stopVoice(); };
   const avatarName = state.profile.name && state.profile.name !== "You" ? state.profile.name : email;
 
   const todayDiary = state.diary[selDate] || { breakfast: [], lunch: [], dinner: [], snack: [] };
   const totals = dayTotals(todayDiary);
   const remaining = Math.round(state.goals.kcal - totals.kcal);
+
+  /* ---- logging streak + history ---- */
+  // A day counts as "logged" once it holds at least one diary entry.
+  const dayLogged = (iso) => { const d = state.diary[iso]; return !!d && MEALS.some((m) => (d[m.key] || []).length > 0); };
+  // Consecutive logged days ending today; a not-yet-logged today doesn't break it.
+  const logStreak = useMemo(() => {
+    let n = 0, cursor = todayISO();
+    if (!dayLogged(cursor)) cursor = addDays(cursor, -1);
+    while (dayLogged(cursor)) { n++; cursor = addDays(cursor, -1); }
+    return n;
+  }, [state.diary]);
+  // Mon–Sun of the week containing today, for the dashboard strip.
+  const streakWeek = useMemo(() => {
+    const start = mondayOf(todayISO());
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  }, [state.diary]);
 
   /* =========================================================================
      SCREEN: TODAY
@@ -529,6 +629,43 @@ function MainApp({ session }) {
               <Sparkles size={16} /> Log {relDay(selDate).toLowerCase()}’s planned meals
             </button>
           )}
+        </div>
+
+        {/* logging streak — tap a day to jump to it, or the header for full history */}
+        <div style={{ padding: "16px 18px 0" }}>
+          <div style={{ ...cardStyle, margin: 0, padding: "11px 14px", border: `1px solid ${C.line}` }}>
+            <button onClick={openLogCalendar} className="flex items-center justify-between" style={{ width: "100%", marginBottom: 9, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+              <div className="flex items-center" style={{ gap: 8 }}>
+                <span style={{ width: 28, height: 28, borderRadius: 9, background: logStreak ? "#FDEBD3" : C.line, display: "grid", placeItems: "center" }}>
+                  <Flame size={16} color={logStreak ? C.apricot : C.inkSoft} />
+                </span>
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{logStreak} day{logStreak === 1 ? "" : "s"}</div>
+                  <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 600, marginTop: 2 }}>{logStreak ? "logging streak" : "start your streak today"}</div>
+                </div>
+              </div>
+              <span className="flex items-center" style={{ gap: 3, fontSize: 11.5, color: C.inkSoft, fontWeight: 700 }}>History <ChevronRight size={14} /></span>
+            </button>
+            <div className="flex" style={{ gap: 6, justifyContent: "space-between" }}>
+              {streakWeek.map((iso) => {
+                const logged = dayLogged(iso);
+                const isToday = iso === todayISO();
+                const isSel = iso === selDate;
+                const future = iso > todayISO();
+                const dow = (fromISO(iso).getDay() + 6) % 7; // Mon=0
+                return (
+                  <button key={iso} disabled={future} onClick={() => { setSelDate(iso); setTab("today"); }}
+                    style={{ flex: 1, textAlign: "center", background: "none", border: "none", padding: 0, cursor: future ? "default" : "pointer", opacity: future ? 0.4 : 1 }}>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.inkSoft, marginBottom: 3 }}>{["M", "T", "W", "T", "F", "S", "S"][dow]}</div>
+                    <div style={{ width: 23, height: 23, borderRadius: 99, margin: "0 auto", display: "grid", placeItems: "center",
+                      background: logged ? C.ever : "transparent", border: logged ? (isSel ? `2px solid ${C.leaf}` : "none") : `1.5px solid ${isSel ? C.leaf : (isToday ? C.leaf : C.line)}` }}>
+                      {logged ? <Check size={13} color="#fff" /> : <span style={{ fontSize: 10.5, fontWeight: 700, color: isToday ? C.ever : C.inkSoft }}>{fromISO(iso).getDate()}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {/* quick actions */}
@@ -835,22 +972,35 @@ function MainApp({ session }) {
   ========================================================================= */
   const renderAddModal = () => {
     const q = foodSearch.trim().toLowerCase();
-    const local = q ? FOODS.filter((f) => f.name.toLowerCase().includes(q)) : FOODS.slice(0, 8);
-    const localNames = new Set(local.map((f) => f.name.toLowerCase()));
-    const remote = foodResults.filter((f) => !localNames.has(f.name.toLowerCase()));
-    const results = [...local, ...remote].slice(0, 40);
+    const recents = state.recentFoods || [];
+    const showingRecents = !q;
+    let results;
+    if (q) {
+      const local = FOODS.filter((f) => f.name.toLowerCase().includes(q));
+      const localNames = new Set(local.map((f) => f.name.toLowerCase()));
+      const remote = foodResults.filter((f) => !localNames.has(f.name.toLowerCase()));
+      results = [...local, ...remote].slice(0, 40);
+    } else {
+      results = recents.length ? recents : FOODS.slice(0, 8);
+    }
     const mealLabel = MEALS.find((m) => m.key === modal.meal)?.label;
     const canManual = manual.name.trim() && manual.kcal !== "";
     return (
       <Sheet open title={`Add to ${mealLabel}`} onClose={closeModal} big>
         <div className="flex" style={{ gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { closeModal(); openAI(modal.date, modal.meal); }} style={miniAction}><Sparkles size={15} /> Describe / speak</button>
+          <button onClick={() => { closeModal(); openRecipeLog(modal.date, modal.meal); }} style={miniAction}><BookOpen size={15} /> Recipes</button>
+          <button onClick={() => { closeModal(); openAI(modal.date, modal.meal); }} style={miniAction}><Sparkles size={15} /> Describe</button>
           <button onClick={() => { closeModal(); openScan(modal.date, modal.meal); }} style={miniAction}><Camera size={15} /> Scan</button>
         </div>
         <SearchInput value={foodSearch} onChange={setFoodSearch} placeholder="Search foods (USDA database)" />
         <div style={{ marginTop: 10 }}>
+          {showingRecents && (
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.inkSoft, letterSpacing: 0.3, margin: "2px 2px 8px" }}>
+              {recents.length ? "RECENT" : "POPULAR"}
+            </div>
+          )}
           {results.map((f) => (
-            <button key={f.id} onClick={() => { addEntry(modal.date, modal.meal, { name: f.name, qty: f.serving, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat }); flash(`Added ${f.name}`); }}
+            <button key={f.id} onClick={() => openLogItem(modal.date, modal.meal, f, "food", { type: "add", date: modal.date, meal: modal.meal })}
               style={{ ...rowBtn }}>
               <div style={{ minWidth: 0 }}>
                 <div className="flex items-center" style={{ gap: 6 }}>
@@ -886,7 +1036,9 @@ function MainApp({ session }) {
             ))}
           </div>
           <button disabled={!canManual} onClick={() => {
-            addEntry(modal.date, modal.meal, { name: manual.name.trim(), qty: manual.qty || "1 serving", kcal: +manual.kcal || 0, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0 });
+            const entry = { name: manual.name.trim(), qty: manual.qty || "1 serving", kcal: +manual.kcal || 0, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0 };
+            recordRecentFood({ ...entry, serving: entry.qty });
+            addEntry(modal.date, modal.meal, entry);
             flash("Added"); closeModal();
           }} style={{ ...primaryBtn, opacity: canManual ? 1 : 0.45 }}>Add to {mealLabel}</button>
         </div>
@@ -1008,7 +1160,7 @@ function MainApp({ session }) {
             <div style={{ ...cardStyle, padding: 14 }}>
               <input value={scanResult.name} onChange={(e) => setScanResult({ ...scanResult, name: e.target.value })}
                 style={{ border: "none", background: "transparent", fontSize: 16, fontWeight: 800, color: C.ink, width: "100%", outline: "none", marginBottom: 4 }} />
-              <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginBottom: 10 }}>{scanResult.qty}</div>
+              <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginBottom: 10 }}>1 serving = {scanResult.qty}</div>
               <div className="flex" style={{ gap: 8 }}>
                 {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
                   <div key={k} style={{ flex: 1, textAlign: "center" }}>
@@ -1019,8 +1171,19 @@ function MainApp({ session }) {
                 ))}
               </div>
             </div>
-            <p style={{ fontSize: 11, color: C.inkSoft, margin: "6px 2px 10px" }}>{scanMode === "barcode" ? "From Open Food Facts — adjust if needed." : "Estimate from image — adjust if needed."}</p>
-            <button onClick={commitScan} style={primaryBtn}><Check size={16} /> Log to {mealLabel}</button>
+            <p style={{ fontSize: 11, color: C.inkSoft, margin: "6px 2px 0" }}>
+              {scanMode === "barcode" ? "From Open Food Facts — values are per serving; adjust if needed."
+                : scanMode === "product" ? "Read from the label — values are per serving; adjust if needed."
+                : "Estimated per serving. Plately also guessed how many servings are in your photo below — adjust if it looks off."}
+            </p>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.inkSoft, textAlign: "center", margin: "14px 0 8px" }}>{scanMode === "meal" ? "Servings in photo" : "Servings"}</div>
+            {servingStepper(scanServings, setScanServings)}
+            {scanServings !== 1 && (
+              <div style={{ fontSize: 12, color: C.ever2, fontWeight: 700, textAlign: "center", marginTop: 10 }}>
+                Total: {Math.round(scanResult.kcal * scanServings)} kcal · {Math.round(scanResult.protein * scanServings)}P / {Math.round(scanResult.carbs * scanServings)}C / {Math.round(scanResult.fat * scanServings)}F
+              </div>
+            )}
+            <button onClick={commitScan} style={{ ...primaryBtn, marginTop: 14 }}><Check size={16} /> Log to {mealLabel}</button>
           </div>
         )}
       </Sheet>
@@ -1054,18 +1217,10 @@ function MainApp({ session }) {
           ))}
         </div>
 
-        <SectionTitle>Method</SectionTitle>
-        <div style={{ marginBottom: 14 }}>
-          {r.steps.map((s, idx) => (
-            <div key={idx} className="flex" style={{ gap: 12, marginBottom: 10 }}>
-              <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 99, background: C.ever, color: "#fff", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 800 }}>{idx + 1}</span>
-              <span style={{ fontSize: 14, color: C.ink, lineHeight: 1.45 }}>{s}</span>
-            </div>
-          ))}
-        </div>
-
         <div className="flex" style={{ gap: 8 }}>
-          <button onClick={() => { addEntry(todayISO(), mealByHour(), recipeToEntry(r)); flash("Logged to today"); closeModal(); }} style={{ ...primaryBtn, flex: 1 }}><Plus size={16} /> Log now</button>
+          <button onClick={() => openLogItem(todayISO(), mealByHour(), { name: r.name, serving: "1 serving", kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat }, "recipe")} style={{ ...primaryBtn, flex: 1 }}>
+            <Plus size={16} /> Log to today
+          </button>
           <button onClick={() => shareRecipe(r)} style={{ ...addBtn, width: 46, height: 46, background: C.leafSoft }}><Share2 size={18} color={C.ever} /></button>
         </div>
         <button onClick={() => { closeModal(); openPlanPicker(todayISO(), mealByHour()); }} style={{ ...secondaryBtn, marginTop: 10 }}><CalendarDays size={16} /> Add to a meal plan</button>
@@ -1087,10 +1242,9 @@ function MainApp({ session }) {
     const setIng = (i, patch) => upd({ ingredients: d.ingredients.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
     const addIng = () => upd({ ingredients: [...d.ingredients, { name: "", qty: "", unit: "" }] });
     const rmIng = (i) => upd({ ingredients: d.ingredients.filter((_, j) => j !== i) });
-    const setStep = (i, v) => upd({ steps: d.steps.map((x, j) => (j === i ? v : x)) });
-    const addStep = () => upd({ steps: [...d.steps, ""] });
-    const rmStep = (i) => upd({ steps: d.steps.filter((_, j) => j !== i) });
     const canSave = d.name.trim().length > 0;
+    const autoMacros = anyIngMacros(d.ingredients);
+    const perServing = macrosFromIngredients(d.ingredients, d.servings);
     return (
       <Sheet open title={d.id ? "Edit recipe" : "New recipe"} onClose={closeModal} big>
         {/* name + emoji */}
@@ -1121,40 +1275,221 @@ function MainApp({ session }) {
               </div>
             ))}
           </div>
-          <div className="flex" style={{ gap: 8 }}>
-            {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
-              <div key={k} style={{ flex: 1 }}>
-                <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
-                <input value={d[k]} onChange={(e) => upd({ [k]: num(e.target.value) })} inputMode="numeric" placeholder="0" style={{ ...inputStyle, width: "100%", textAlign: "center", padding: "8px 4px" }} />
-              </div>
-            ))}
-          </div>
+          {autoMacros ? (
+            <div className="flex" style={{ gap: 8 }}>
+              {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
+                <div key={k} style={{ flex: 1, textAlign: "center", background: C.leafSoft, borderRadius: 10, padding: "8px 4px" }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.ever, fontVariantNumeric: "tabular-nums" }}>{perServing[k]}</div>
+                  <div style={{ fontSize: 10, color: C.ever2, fontWeight: 700 }}>{lbl}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex" style={{ gap: 8 }}>
+              {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
+                <div key={k} style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
+                  <input value={d[k]} onChange={(e) => upd({ [k]: num(e.target.value) })} inputMode="numeric" placeholder="0" style={{ ...inputStyle, width: "100%", textAlign: "center", padding: "8px 4px" }} />
+                </div>
+              ))}
+            </div>
+          )}
+          {autoMacros && <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 600, textAlign: "center", marginTop: 8 }}>Calculated from {d.servings || 1} serving{(+d.servings || 1) > 1 ? "s" : ""} of ingredients below</div>}
         </div>
 
         <SectionTitle>Ingredients</SectionTitle>
-        {d.ingredients.map((ing, i) => (
-          <div key={i} className="flex items-center" style={{ gap: 6, marginBottom: 8 }}>
-            <input value={ing.name} onChange={(e) => setIng(i, { name: e.target.value })} placeholder="Ingredient" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
-            <input value={ing.qty} onChange={(e) => setIng(i, { qty: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" placeholder="Qty" style={{ ...inputStyle, width: 52, textAlign: "center", padding: "10px 4px" }} />
-            <input value={ing.unit} onChange={(e) => setIng(i, { unit: e.target.value })} placeholder="unit" style={{ ...inputStyle, width: 60, padding: "10px 6px" }} />
-            <button onClick={() => rmIng(i)} style={trashBtn}><X size={15} /></button>
-          </div>
-        ))}
-        <button onClick={addIng} style={{ ...secondaryBtn, marginTop: 2 }}><Plus size={15} /> Add ingredient</button>
-
-        <SectionTitle>Method</SectionTitle>
-        {d.steps.map((s, i) => (
-          <div key={i} className="flex items-start" style={{ gap: 8, marginBottom: 8 }}>
-            <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 99, background: C.ever, color: "#fff", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 800, marginTop: 6 }}>{i + 1}</span>
-            <textarea value={s} onChange={(e) => setStep(i, e.target.value)} rows={2} placeholder={`Step ${i + 1}`} style={{ ...inputStyle, flex: 1, minWidth: 0, resize: "none", lineHeight: 1.4 }} />
-            <button onClick={() => rmStep(i)} style={{ ...trashBtn, marginTop: 6 }}><X size={15} /></button>
-          </div>
-        ))}
-        <button onClick={addStep} style={{ ...secondaryBtn, marginTop: 2 }}><Plus size={15} /> Add step</button>
+        {d.ingredients.map((ing, i) => {
+          const tracked = ingHasMacros(ing);
+          const q = +ing.qty || 0;
+          return (
+            <div key={i} style={{ marginBottom: 8 }}>
+              <div className="flex items-center" style={{ gap: 6 }}>
+                <input value={ing.name} onChange={(e) => setIng(i, { name: e.target.value })} placeholder="Ingredient" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                <input value={ing.qty} onChange={(e) => setIng(i, { qty: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" placeholder="Qty" style={{ ...inputStyle, width: 52, textAlign: "center", padding: "10px 4px" }} />
+                <input value={ing.unit} onChange={(e) => setIng(i, { unit: e.target.value })} placeholder="unit" style={{ ...inputStyle, width: 60, padding: "10px 6px" }} />
+                <button onClick={() => rmIng(i)} style={trashBtn}><X size={15} /></button>
+              </div>
+              {tracked && (
+                <div style={{ fontSize: 10.5, color: C.ever2, fontWeight: 700, margin: "4px 0 0 2px" }}>
+                  {Math.round((+ing.kcal || 0) * q)} kcal · {Math.round((+ing.protein || 0) * q)}P / {Math.round((+ing.carbs || 0) * q)}C / {Math.round((+ing.fat || 0) * q)}F
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <div className="flex" style={{ gap: 8, marginTop: 2 }}>
+          <button onClick={() => openIngredientPick("search")} style={{ ...secondaryBtn, flex: 1 }}><Search size={15} /> Database</button>
+          <button onClick={() => openIngredientPick("barcode")} style={{ ...secondaryBtn, flex: 1 }}><ScanLine size={15} /> Scan</button>
+        </div>
+        <button onClick={addIng} style={{ ...secondaryBtn, marginTop: 8 }}><Plus size={15} /> Add manually</button>
 
         <button disabled={!canSave} onClick={saveRecipe} style={{ ...primaryBtn, marginTop: 18, opacity: canSave ? 1 : 0.45 }}>
           <Check size={17} /> {d.id ? "Save changes" : "Save recipe"}
         </button>
+      </Sheet>
+    );
+  };
+
+  // Ingredient picker for the recipe builder: search the food database or scan a
+  // barcode, then add the result (with macros) back into the recipe draft.
+  const renderIngredientPick = () => {
+    const q = foodSearch.trim().toLowerCase();
+    const local = q ? FOODS.filter((f) => f.name.toLowerCase().includes(q)) : FOODS.slice(0, 8);
+    const localNames = new Set(local.map((f) => f.name.toLowerCase()));
+    const remote = foodResults.filter((f) => !localNames.has(f.name.toLowerCase()));
+    const results = [...local, ...remote].slice(0, 40);
+    const back = () => setModal({ type: "recipebuilder" });
+    return (
+      <Sheet open title="Add ingredient" onClose={back} big>
+        <div className="flex" style={{ gap: 8, marginBottom: 14, background: C.line, padding: 4, borderRadius: 12 }}>
+          {[["search", "Database", "🔍"], ["barcode", "Barcode", "📷"], ["label", "Label", "🏷️"]].map(([k, lbl, em]) => (
+            <button key={k} onClick={() => { setIngPickMode(k); setScanResult(null); setScanError(""); setScanImg(null); if (k === "label") setScanMode("product"); }}
+              style={{ flex: 1, padding: "9px", borderRadius: 9, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13,
+                background: ingPickMode === k ? C.surface : "transparent", color: ingPickMode === k ? C.ink : C.inkSoft, boxShadow: ingPickMode === k ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>
+              {em} {lbl}
+            </button>
+          ))}
+        </div>
+
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => onPickImage(e.target.files?.[0])} />
+
+        {ingPickMode === "search" && (
+          <>
+            <SearchInput value={foodSearch} onChange={setFoodSearch} placeholder="Search foods (USDA database)" />
+            <div style={{ marginTop: 10 }}>
+              {results.map((f) => (
+                <button key={f.id} onClick={() => addIngredientFromFood(f)} style={{ ...rowBtn }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="flex items-center" style={{ gap: 6 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                      {f.source === "USDA" && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, color: C.ever2, background: C.leafSoft, borderRadius: 5, padding: "1px 5px", letterSpacing: 0.3 }}>USDA</span>}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>{f.serving} · {f.protein}P / {f.carbs}C / {f.fat}F</div>
+                  </div>
+                  <div className="flex items-center" style={{ gap: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{f.kcal}</span>
+                    <span style={{ ...addBtn, background: C.leafSoft }}><Plus size={15} color={C.ever} /></span>
+                  </div>
+                </button>
+              ))}
+              {foodBusy && (
+                <div className="flex items-center" style={{ gap: 8, padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>
+                  <Loader2 size={15} className="pl-spin" /> Searching USDA database…
+                </div>
+              )}
+              {!foodBusy && q.length >= 2 && !results.length && (
+                <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No matches — try the barcode or label tab, or add it manually.</div>
+              )}
+            </div>
+          </>
+        )}
+
+        {ingPickMode === "barcode" && !scanResult && (
+          <div>
+            <BarcodeScanner onDetect={runBarcode} />
+            {scanBusy && (
+              <div className="flex items-center" style={{ gap: 8, justifyContent: "center", marginTop: 12, color: C.inkSoft, fontSize: 13, fontWeight: 600 }}>
+                <Loader2 size={16} className="pl-spin" /> Looking up product…
+              </div>
+            )}
+          </div>
+        )}
+
+        {ingPickMode === "label" && !scanResult && (
+          !scanImg ? (
+            <button onClick={() => fileRef.current?.click()}
+              style={{ width: "100%", padding: "32px 16px", borderRadius: 18, border: `2px dashed ${C.line}`, background: "#FAF9F3", cursor: "pointer",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: C.inkSoft }}>
+              <div style={{ width: 56, height: 56, borderRadius: 99, background: C.leafSoft, display: "grid", placeItems: "center" }}>
+                <ScanLine size={26} color={C.ever} />
+              </div>
+              <div style={{ fontWeight: 800, color: C.ink, fontSize: 14 }}>Snap the nutrition label</div>
+              <div style={{ fontSize: 12 }}>Camera on mobile · upload on desktop</div>
+            </button>
+          ) : (
+            <div>
+              <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}` }}>
+                <img src={scanImg.dataUrl} alt="label" style={{ width: "100%", maxHeight: 230, objectFit: "cover", display: "block" }} />
+                <button onClick={() => { setScanImg(null); setScanResult(null); }} style={{ position: "absolute", top: 8, right: 8, width: 30, height: 30, borderRadius: 99, border: "none", background: "rgba(0,0,0,.55)", color: "#fff", cursor: "pointer", display: "grid", placeItems: "center" }}><X size={16} /></button>
+              </div>
+              <button disabled={scanBusy} onClick={runScan} style={{ ...primaryBtn, marginTop: 12, opacity: scanBusy ? 0.55 : 1 }}>
+                {scanBusy ? <><Loader2 size={16} className="pl-spin" /> Reading label…</> : <><Sparkles size={16} /> Identify & estimate</>}
+              </button>
+            </div>
+          )
+        )}
+
+        {ingPickMode !== "search" && scanError && <div style={errBox}>{scanError}</div>}
+
+        {ingPickMode !== "search" && scanResult && (
+          <div style={{ marginTop: 4 }}>
+            <div style={{ ...cardStyle, padding: 14 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 4 }}>{scanResult.name}</div>
+              <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginBottom: 10 }}>{scanResult.qty} · {scanResult.protein}P / {scanResult.carbs}C / {scanResult.fat}F · {scanResult.kcal} kcal</div>
+              <button onClick={() => addIngredientFromFood(scanResult)} style={primaryBtn}><Plus size={16} /> Add to recipe</button>
+              <button onClick={() => { setScanResult(null); setScanImg(null); }} style={{ ...secondaryBtn, marginTop: 8 }}>{ingPickMode === "label" ? "Scan another label" : "Scan another"}</button>
+            </div>
+            <p style={{ fontSize: 11, color: C.inkSoft, margin: "6px 2px 0" }}>{ingPickMode === "label" ? "Estimated from the label" : "From Open Food Facts"} — quantity defaults to 1 serving; adjust it in the recipe.</p>
+          </div>
+        )}
+      </Sheet>
+    );
+  };
+
+  // Month calendar of logged days; tap a day to jump the Today view to it.
+  const renderLogCalendar = () => {
+    const { y, m } = calMonth;
+    const first = new Date(y, m, 1);
+    const lead = (first.getDay() + 6) % 7; // blanks before day 1 (Mon-first)
+    const days = new Date(y, m + 1, 0).getDate();
+    const cells = [...Array(lead).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
+    const step = (delta) => setCalMonth(({ y, m }) => { const d = new Date(y, m + delta, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+    const loggedCount = Array.from({ length: days }, (_, i) => toISO(new Date(y, m, i + 1))).filter(dayLogged).length;
+    return (
+      <Sheet open title="Logging history" onClose={closeModal} big>
+        <div className="flex items-center" style={{ gap: 10, ...cardStyle, padding: 14, marginTop: 0 }}>
+          <span style={{ width: 38, height: 38, borderRadius: 11, background: logStreak ? "#FDEBD3" : C.line, display: "grid", placeItems: "center" }}>
+            <Flame size={20} color={logStreak ? C.apricot : C.inkSoft} />
+          </span>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{logStreak} day{logStreak === 1 ? "" : "s"}</div>
+            <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginTop: 3 }}>current logging streak</div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between" style={{ margin: "16px 2px 12px" }}>
+          <button onClick={() => step(-1)} style={ghostBtn}><ChevronLeft size={18} /></button>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m]} {y}</div>
+          <button onClick={() => step(1)} style={ghostBtn}><ChevronRight size={18} /></button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 6 }}>
+          {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
+            <div key={i} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: C.inkSoft }}>{d}</div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+          {cells.map((day, i) => {
+            if (!day) return <div key={i} />;
+            const iso = toISO(new Date(y, m, day));
+            const logged = dayLogged(iso);
+            const isToday = iso === todayISO();
+            const future = iso > todayISO();
+            return (
+              <button key={i} disabled={future}
+                onClick={() => { setSelDate(iso); setTab("today"); closeModal(); }}
+                style={{ aspectRatio: "1", borderRadius: 10, cursor: future ? "default" : "pointer", display: "grid", placeItems: "center",
+                  border: isToday ? `1.5px solid ${C.leaf}` : "1px solid transparent",
+                  background: logged ? C.ever : "transparent", color: logged ? "#fff" : (future ? "#C9CDC6" : C.ink),
+                  fontSize: 13, fontWeight: 700, opacity: future ? 0.5 : 1 }}>
+                {day}
+              </button>
+            );
+          })}
+        </div>
+        <p style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600, textAlign: "center", marginTop: 14 }}>
+          <b style={{ color: C.ever }}>{loggedCount}</b> day{loggedCount === 1 ? "" : "s"} logged this month · tap a day to view it
+        </p>
       </Sheet>
     );
   };
@@ -1183,6 +1518,86 @@ function MainApp({ session }) {
             <span style={{ ...addBtn, background: C.leafSoft }}><Plus size={15} color={C.ever} /></span>
           </button>
         ))}
+      </Sheet>
+    );
+  };
+
+  // Confirm a log with a servings multiplier; scales macros and the meal choice.
+  const renderLogItem = () => {
+    const d = logDraft; if (!d) return null;
+    const s = Math.max(0.5, d.servings || 1);
+    const setServings = (v) => setLogDraft({ ...d, servings: v });
+    const scaled = (v) => Math.round(v * s);
+    const mealLabel = MEALS.find((m) => m.key === d.meal)?.label;
+    const back = () => setModal(d.back || null);
+    const logIt = () => {
+      const entry = {
+        name: d.name,
+        qty: s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`,
+        kcal: scaled(d.kcal), protein: scaled(d.protein), carbs: scaled(d.carbs), fat: scaled(d.fat),
+      };
+      if (d.kind === "food") recordRecentFood({ name: d.name, serving: d.unit, kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, source: d.source });
+      addEntry(d.date, d.meal, entry);
+      flash(`Logged ${d.name}`);
+      setModal(d.back || null);
+    };
+    return (
+      <Sheet open title="Log item" onClose={back}>
+        <div style={{ ...cardStyle, padding: 14 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 2 }}>{d.name}</div>
+          <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginBottom: 12 }}>{d.unit} each</div>
+          <div className="flex" style={{ gap: 8 }}>
+            {[["kcal", scaled(d.kcal), C.apricot], ["P", scaled(d.protein), C.protein], ["C", scaled(d.carbs), C.carbs], ["F", scaled(d.fat), C.fat]].map(([l, v, col]) => (
+              <div key={l} style={{ flex: 1, textAlign: "center", background: "#FAF9F3", borderRadius: 10, padding: "8px 4px" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                <div style={{ fontSize: 10, color: C.inkSoft, fontWeight: 700 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <SectionTitle>Servings</SectionTitle>
+        {servingStepper(d.servings, setServings)}
+
+        <SectionTitle>Meal</SectionTitle>
+        <div className="flex" style={{ gap: 6, flexWrap: "wrap" }}>
+          {MEALS.map((m) => (
+            <Pill key={m.key} active={d.meal === m.key} onClick={() => setLogDraft({ ...d, meal: m.key })}>{m.emoji} {m.label}</Pill>
+          ))}
+        </div>
+
+        <button onClick={logIt} style={{ ...primaryBtn, marginTop: 18 }}><Plus size={16} /> Log to {mealLabel}</button>
+      </Sheet>
+    );
+  };
+
+  // Pick a saved recipe to log straight into a diary meal (vs. the meal plan).
+  const renderRecipeLog = () => {
+    const q = recipeSearch.trim().toLowerCase();
+    const hasCustom = (state.recipes || []).length > 0;
+    const list = allRecipes.filter((r) =>
+      (recipeFilter === "All" || (recipeFilter === "My recipes" ? r.custom : r.tags.includes(recipeFilter))) &&
+      (!q || r.name.toLowerCase().includes(q)));
+    const mealLabel = MEALS.find((m) => m.key === modal.meal)?.label;
+    return (
+      <Sheet open title={`Log recipe to ${mealLabel} · ${relDay(modal.date)}`} onClose={closeModal} big>
+        <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
+        <div className="flex" style={{ gap: 8, padding: "10px 0", overflowX: "auto" }}>
+          {["All", ...(hasCustom ? ["My recipes"] : []), ...GOAL_TAGS].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
+        </div>
+        {list.map((r) => (
+          <button key={r.id} onClick={() => openLogItem(modal.date, modal.meal, { name: r.name, serving: "1 serving", kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat }, "recipe", { type: "recipelog", date: modal.date, meal: modal.meal })} style={rowBtn}>
+            <div className="flex items-center" style={{ gap: 10, minWidth: 0 }}>
+              <span style={{ width: 40, height: 40, borderRadius: 11, background: r.bg, display: "grid", placeItems: "center", fontSize: 21 }}>{r.emoji}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                <div style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>{r.kcal} kcal · {r.protein}P/{r.carbs}C/{r.fat}F</div>
+              </div>
+            </div>
+            <span style={{ ...addBtn, background: C.leafSoft }}><Plus size={15} color={C.ever} /></span>
+          </button>
+        ))}
+        {!list.length && <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No recipes match — create one from the Recipes screen.</div>}
       </Sheet>
     );
   };
@@ -1459,7 +1874,11 @@ function MainApp({ session }) {
         {modal?.type === "scan" && renderScanModal()}
         {modal?.type === "recipe" && renderRecipeModal()}
         {modal?.type === "recipebuilder" && renderRecipeBuilder()}
+        {modal?.type === "ingredientpick" && renderIngredientPick()}
+        {modal?.type === "logcal" && renderLogCalendar()}
         {modal?.type === "planpick" && renderPlanPick()}
+        {modal?.type === "recipelog" && renderRecipeLog()}
+        {modal?.type === "logitem" && renderLogItem()}
         {modal?.type === "delivery" && renderDelivery()}
         {modal?.type === "settings" && renderSettings()}
         {modal?.type === "profile" && renderProfile()}

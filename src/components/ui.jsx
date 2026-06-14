@@ -63,9 +63,9 @@ export const MacroMini = ({ label, val, goal, color, light }) => {
   const pct = goal ? Math.min(1, val / goal) : 0;
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div className="flex items-baseline justify-between" style={{ marginBottom: 4, flexWrap: "wrap", columnGap: 4 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "rgba(255,255,255,.8)" : C.inkSoft }}>{label}</span>
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "#fff" : C.ink, fontVariantNumeric: "tabular-nums" }}>{Math.round(val)}/{goal}g</span>
+      <div className="flex items-baseline justify-between" style={{ marginBottom: 4, gap: 4, flexWrap: "nowrap" }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "rgba(255,255,255,.8)" : C.inkSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{label}</span>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "#fff" : C.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0 }}>{Math.round(val)}/{goal}g</span>
       </div>
       <div style={{ height: 6, borderRadius: 99, background: light ? "rgba(255,255,255,.2)" : C.line, overflow: "hidden" }}>
         <div style={{ width: `${pct * 100}%`, height: "100%", background: color, borderRadius: 99, transition: "width .5s" }} />
