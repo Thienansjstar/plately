@@ -53,7 +53,7 @@ export const centerFrame = (children) => (
   </div>
 );
 export const MacroRow = ({ totals, goals, light }) => (
-  <div className="flex" style={{ gap: 10 }}>
+  <div className="flex" style={{ gap: 8 }}>
     <MacroMini label="Protein" val={totals.protein} goal={goals.protein} color={C.protein} light={light} />
     <MacroMini label="Carbs" val={totals.carbs} goal={goals.carbs} color={C.carbs} light={light} />
     <MacroMini label="Fat" val={totals.fat} goal={goals.fat} color={C.fat} light={light} />
@@ -62,8 +62,8 @@ export const MacroRow = ({ totals, goals, light }) => (
 export const MacroMini = ({ label, val, goal, color, light }) => {
   const pct = goal ? Math.min(1, val / goal) : 0;
   return (
-    <div style={{ flex: 1 }}>
-      <div className="flex items-baseline justify-between" style={{ marginBottom: 4 }}>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="flex items-baseline justify-between" style={{ marginBottom: 4, flexWrap: "wrap", columnGap: 4 }}>
         <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "rgba(255,255,255,.8)" : C.inkSoft }}>{label}</span>
         <span style={{ fontSize: 10.5, fontWeight: 700, color: light ? "#fff" : C.ink, fontVariantNumeric: "tabular-nums" }}>{Math.round(val)}/{goal}g</span>
       </div>

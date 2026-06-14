@@ -513,7 +513,7 @@ function MainApp({ session }) {
               <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{Math.abs(remaining)}</div>
               <div style={{ fontSize: 10, opacity: 0.75, fontWeight: 700, letterSpacing: 0.5, marginTop: 2 }}>{remaining >= 0 ? "KCAL LEFT" : "OVER"}</div>
             </Ring>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div className="flex justify-between" style={{ fontSize: 12, marginBottom: 10, opacity: 0.85 }}>
                 <span><b style={{ fontVariantNumeric: "tabular-nums" }}>{Math.round(totals.kcal)}</b> eaten</span>
                 <span><b style={{ fontVariantNumeric: "tabular-nums" }}>{state.goals.kcal}</b> goal</span>
