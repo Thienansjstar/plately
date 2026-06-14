@@ -115,6 +115,56 @@ export async function searchUSDA(query) {
     .filter((f) => f.kcal || f.protein || f.carbs || f.fat);
 }
 
+// Recipe search via Spoonacular (through the dev proxy). complexSearch is asked
+// for full info + per-serving nutrition, so each result maps straight to our
+// recipe shape — no second detail fetch needed.
+const RECIPE_BGS = ["#EAF3DA", "#FBE6D6", "#E7EEF6", "#F3E9D9", "#F0ECF6", "#E6F1EF"];
+const spoonNutrient = (nutrients, name) => {
+  const hit = (nutrients || []).find((n) => n.name === name);
+  return hit ? Math.max(0, Math.round(hit.amount)) : 0;
+};
+const mapSpoonRecipe = (r) => {
+  const nutrients = r.nutrition?.nutrients || [];
+  const ingredients = (r.extendedIngredients || []).map((i) => ({
+    name: i.nameClean || i.name || i.originalName || "",
+    qty: +(i.measures?.us?.amount ?? i.amount ?? 0) || 0,
+    unit: i.measures?.us?.unitShort || i.unit || "",
+  })).filter((i) => i.name);
+  const tags = [...new Set([...(r.diets || []), ...(r.dishTypes || [])])]
+    .map((t) => t.replace(/\b\w/g, (c) => c.toUpperCase()));
+  return {
+    id: `sp_${r.id}`,
+    spoonId: r.id,
+    name: r.title || "Recipe",
+    image: r.image || "",
+    emoji: "🍽️",
+    bg: RECIPE_BGS[r.id % RECIPE_BGS.length],
+    tags,
+    servings: Math.max(1, r.servings || 1),
+    minutes: Math.max(0, r.readyInMinutes || 0),
+    kcal: spoonNutrient(nutrients, "Calories"),
+    protein: spoonNutrient(nutrients, "Protein"),
+    carbs: spoonNutrient(nutrients, "Carbohydrates"),
+    fat: spoonNutrient(nutrients, "Fat"),
+    ingredients,
+    source: "spoonacular",
+  };
+};
+export async function searchSpoonacular(query, number = 20) {
+  const res = await fetch("/api/spoonacular", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, number }),
+  });
+  if (!res.ok) {
+    let msg = `Recipe search failed (${res.status})`;
+    try { const e = await res.json(); msg = (typeof e?.error === "string" ? e.error : e?.message) || msg; } catch {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  const data = await res.json();
+  return (Array.isArray(data.results) ? data.results : []).map(mapSpoonRecipe);
+}
+
 // Natural-language parsing via Nutritionix (through the dev proxy) — used as a
 // fallback when the Claude estimate is unavailable or fails.
 export async function parseNutritionix(text) {

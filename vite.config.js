@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
   const USDA = env.USDA_FDC_API_KEY || "DEMO_KEY"; // DEMO_KEY works at low rate limits
   const NIX_ID = env.NUTRITIONIX_APP_ID;
   const NIX_KEY = env.NUTRITIONIX_APP_KEY;
+  const SPOON = env.SPOONACULAR_API_KEY;
 
   const readBody = async (req) => {
     const chunks = [];
@@ -124,6 +125,23 @@ export default defineConfig(({ mode }) => {
                 body,
               }));
             } catch (e) { sendJson(res, 502, { error: "Nutritionix request failed: " + (e?.message || "unknown error") }); }
+          });
+
+          server.middlewares.use("/api/spoonacular", async (req, res) => {
+            if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+            if (!SPOON) return sendJson(res, 501, { error: "Spoonacular not configured (set SPOONACULAR_API_KEY in .env)." });
+            try {
+              const { query, number } = JSON.parse((await readBody(req)) || "{}");
+              const u = new URL("https://api.spoonacular.com/recipes/complexSearch");
+              u.searchParams.set("apiKey", SPOON);
+              u.searchParams.set("number", String(Math.min(number || 20, 40)));
+              u.searchParams.set("addRecipeInformation", "true");
+              u.searchParams.set("addRecipeNutrition", "true");
+              u.searchParams.set("fillIngredients", "true");
+              if (query && query.trim()) u.searchParams.set("query", query.trim());
+              else u.searchParams.set("sort", "popularity");
+              await pipe(res, await fetch(u));
+            } catch (e) { sendJson(res, 502, { error: "Spoonacular request failed: " + (e?.message || "unknown error") }); }
           });
         },
       },

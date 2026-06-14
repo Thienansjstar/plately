@@ -17,10 +17,10 @@ import {
   mondayOf, relDay, mealByHour, uid, sumEntries, dayTotals, recipeToEntry,
   fmtQty, extractJSON,
 } from "./src/lib/helpers";
-import { callClaude, lookupBarcode, searchUSDA, parseNutritionix } from "./src/lib/api";
+import { callClaude, lookupBarcode, searchUSDA, parseNutritionix, searchSpoonacular } from "./src/lib/api";
 import { supabase } from "./src/lib/supabase";
 import {
-  MEALS, GOAL_TAGS, RECIPES, FOODS, CAT, categoryOf, CAT_ORDER, catEmoji,
+  MEALS, GOAL_TAGS, FOODS, CAT, categoryOf, CAT_ORDER, catEmoji,
   PROVIDERS, seedWeights, seedDiary, seedPlan, initialState, RECIPE_BGS, RECIPE_EMOJIS,
 } from "./src/data/seed";
 import {
@@ -57,6 +57,9 @@ function MainApp({ session }) {
   // Recipes
   const [recipeFilter, setRecipeFilter] = useState("All");
   const [recipeSearch, setRecipeSearch] = useState("");
+  const [spResults, setSpResults] = useState([]); // Spoonacular recipe search results
+  const [spBusy, setSpBusy] = useState(false);
+  const [spError, setSpError] = useState("");
   const [logDraft, setLogDraft] = useState(null); // { date, meal, name, unit, kcal, protein, carbs, fat, servings, kind, source, back }
   const [scanServings, setScanServings] = useState(1);
 
@@ -82,6 +85,26 @@ function MainApp({ session }) {
     }, 350);
     return () => clearTimeout(t);
   }, [foodSearch, modal?.type]);
+
+  // Debounced Spoonacular recipe search — runs on the Recipes screen and in the
+  // plan / recipe-log pickers. An empty query returns popular recipes. Results
+  // are cached per query for the session so reused searches are instant and
+  // don't burn API quota.
+  useEffect(() => {
+    const onRecipes = tab === "recipes" && !modal;
+    const inPicker = modal?.type === "planpick" || modal?.type === "recipelog";
+    if (!onRecipes && !inPicker) return;
+    const key = recipeSearch.trim().toLowerCase();
+    const cached = spCacheRef.current.get(key);
+    if (cached) { setSpResults(cached); setSpBusy(false); setSpError(""); return; }
+    setSpBusy(true); setSpError("");
+    const t = setTimeout(async () => {
+      try { const r = await searchSpoonacular(recipeSearch.trim()); spCacheRef.current.set(key, r); setSpResults(r); }
+      catch (e) { setSpResults([]); setSpError(/configured/i.test(e?.message || "") ? "Recipe search needs a Spoonacular API key in .env." : "Couldn't reach the recipe database."); }
+      finally { setSpBusy(false); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [recipeSearch, tab, modal?.type]);
   const [aiText, setAiText] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResults, setAiResults] = useState(null);
@@ -102,6 +125,7 @@ function MainApp({ session }) {
   const recogRef = useRef(null);
   const fileRef = useRef(null);
   const saveTimer = useRef(null);
+  const spCacheRef = useRef(new Map()); // session cache of Spoonacular searches (query → results)
 
   const flash = (msg) => { setToast(msg); clearTimeout(window.__t); window.__t = setTimeout(() => setToast(null), 2200); };
 
@@ -171,10 +195,20 @@ function MainApp({ session }) {
   }, [state, loaded, userId, storageKey]);
 
   const mutate = (fn) => setState((prev) => { const next = JSON.parse(JSON.stringify(prev)); fn(next); return next; });
-  // User-created recipes come first so they're easy to find; seed recipes follow.
-  const allRecipes = useMemo(() => [...(state.recipes || []), ...RECIPES], [state.recipes]);
-  const recipeById = (id) => allRecipes.find((r) => r.id === id);
+  // Recipes the user "owns": their own creations + any Spoonacular recipe they've
+  // referenced (cached so plan/diary lookups survive a reload). Live search
+  // results (spResults) are also consulted for on-screen lookups.
+  const allRecipes = useMemo(() => [...(state.recipes || []), ...(state.recipeCache || [])], [state.recipes, state.recipeCache]);
+  const recipeById = (id) => allRecipes.find((r) => r.id === id) || spResults.find((r) => r.id === id);
   const isCustomRecipe = (id) => (state.recipes || []).some((r) => r.id === id);
+  // Persist a Spoonacular recipe so it can be resolved later (planning/logging).
+  const cacheRecipe = (r) => {
+    if (!r || isCustomRecipe(r.id)) return;
+    mutate((s) => {
+      if (!s.recipeCache) s.recipeCache = [];
+      if (!s.recipeCache.some((x) => x.id === r.id)) s.recipeCache = [r, ...s.recipeCache].slice(0, 200);
+    });
+  };
 
   /* ---- recipe builder ---- */
   // An ingredient added from the database/scan carries per-unit macros + a qty
@@ -300,7 +334,7 @@ function MainApp({ session }) {
   };
 
   /* ---- plan actions ---- */
-  const addToPlan = (date, meal, recipeId) => { mutate((s) => { if (!s.plan[date]) s.plan[date] = { breakfast: [], lunch: [], dinner: [], snack: [] }; s.plan[date][meal].push(recipeId); }); };
+  const addToPlan = (date, meal, recipeId) => { cacheRecipe(recipeById(recipeId)); mutate((s) => { if (!s.plan[date]) s.plan[date] = { breakfast: [], lunch: [], dinner: [], snack: [] }; s.plan[date][meal].push(recipeId); }); };
   const removeFromPlan = (date, meal, idx) => mutate((s) => { s.plan[date][meal].splice(idx, 1); });
 
   /* ---- grocery ---- */
@@ -527,7 +561,7 @@ function MainApp({ session }) {
   const openAdd = (date, meal) => { setFoodSearch(""); setManual({ name: "", qty: "1 serving", kcal: "", protein: "", carbs: "", fat: "" }); setModal({ type: "add", date, meal }); };
   const openAI = (date, meal) => { setAiText(""); setAiResults(null); setAiError(""); setModal({ type: "ai", date, meal }); };
   const openScan = (date, meal) => { setScanImg(null); setScanResult(null); setScanError(""); setScanMode("meal"); setScanServings(1); setModal({ type: "scan", date, meal }); };
-  const openRecipe = (id) => setModal({ type: "recipe", id });
+  const openRecipe = (id) => { cacheRecipe(recipeById(id)); setModal({ type: "recipe", id }); };
   const openPlanPicker = (date, meal) => { setRecipeFilter("All"); setRecipeSearch(""); setModal({ type: "planpick", date, meal }); };
   const openRecipeLog = (date, meal) => { setRecipeFilter("All"); setRecipeSearch(""); setModal({ type: "recipelog", date, meal }); };
   // Universal "log with servings" confirm step. `item` carries per-serving macros;
@@ -753,7 +787,9 @@ function MainApp({ session }) {
                         return (
                           <div key={idx} className="flex items-center justify-between" style={{ marginTop: 6 }}>
                             <button onClick={() => openRecipe(r.id)} className="flex items-center" style={{ gap: 8, background: "none", border: "none", cursor: "pointer", padding: 0, minWidth: 0 }}>
-                              <span style={{ fontSize: 16 }}>{r.emoji}</span>
+                              {r.image
+                                ? <img src={r.image} alt="" style={{ width: 22, height: 22, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+                                : <span style={{ fontSize: 16 }}>{r.emoji}</span>}
                               <span style={{ fontSize: 13.5, fontWeight: 600, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                             </button>
                             <button onClick={() => removeFromPlan(d, m.key, idx)} style={trashBtn}><X size={14} /></button>
@@ -781,47 +817,76 @@ function MainApp({ session }) {
   ========================================================================= */
   const renderRecipes = () => {
     const q = recipeSearch.trim().toLowerCase();
-    const list = allRecipes.filter((r) =>
-      (recipeFilter === "All" || (recipeFilter === "My recipes" ? r.custom : r.tags.includes(recipeFilter))) &&
-      (!q || r.name.toLowerCase().includes(q) || r.tags.join(" ").toLowerCase().includes(q)));
+    const onlyMine = recipeFilter === "My recipes";
+    const customMatches = (state.recipes || []).filter((r) =>
+      !q || r.name.toLowerCase().includes(q) || (r.tags || []).join(" ").toLowerCase().includes(q));
+    // Recently used recipes (from the cache) — shown for quick reuse, filtered by
+    // the query, and deduped against custom recipes + the live results below.
+    const recents = onlyMine ? [] : (state.recipeCache || []).filter((r) =>
+      (!q || r.name.toLowerCase().includes(q)) && !customMatches.some((c) => c.id === r.id));
+    const recentIds = new Set(recents.map((r) => r.id));
+    const popular = onlyMine ? [] : spResults.filter((r) => !recentIds.has(r.id) && !customMatches.some((c) => c.id === r.id));
     const hasCustom = (state.recipes || []).length > 0;
+    const sectionHeader = (t) => <div style={{ fontSize: 11, fontWeight: 800, color: C.inkSoft, letterSpacing: 0.3, margin: "8px 2px 8px" }}>{t}</div>;
+    const nothing = !customMatches.length && !recents.length && !popular.length;
     return (
       <div>
-        <Header title="Recipes" subtitle="Tasty, goal-friendly meals" right={<Avatar name={avatarName} onClick={openProfile} />} />
+        <Header title="Recipes" subtitle="Search thousands of recipes" right={<Avatar name={avatarName} onClick={openProfile} />} />
         <div style={{ padding: "0 18px 10px" }}>
-          <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
+          <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes (e.g. chicken pasta)" />
         </div>
         <div style={{ padding: "0 18px 12px" }}>
           <button onClick={() => openRecipeBuilder()} style={{ ...primaryBtn }}><ChefHat size={17} /> Create your own recipe</button>
         </div>
-        <div className="flex" style={{ gap: 8, padding: "0 18px 12px", overflowX: "auto" }}>
-          {["All", ...(hasCustom ? ["My recipes"] : []), ...GOAL_TAGS].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
-        </div>
+        {hasCustom && (
+          <div className="flex" style={{ gap: 8, padding: "0 18px 12px", overflowX: "auto" }}>
+            {["All", "My recipes"].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
+          </div>
+        )}
         <div style={{ padding: "0 18px 24px" }}>
-          {list.map((r) => (
-            <button key={r.id} onClick={() => openRecipe(r.id)} style={{ ...cardStyle, width: "100%", textAlign: "left", cursor: "pointer", display: "flex", gap: 12, alignItems: "center" }}>
-              <div style={{ width: 56, height: 56, borderRadius: 14, background: r.bg, display: "grid", placeItems: "center", fontSize: 28, flexShrink: 0 }}>{r.emoji}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="flex items-center" style={{ gap: 6 }}>
-                  <div style={{ fontWeight: 800, color: C.ink, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                  {r.custom && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, color: C.ever2, background: C.leafSoft, borderRadius: 5, padding: "1px 5px", letterSpacing: 0.3 }}>YOURS</span>}
-                </div>
-                <div className="flex items-center" style={{ gap: 8, marginTop: 3 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.apricot, fontVariantNumeric: "tabular-nums" }}>{r.kcal} kcal</span>
-                  <span style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>· {r.protein}P / {r.carbs}C / {r.fat}F</span>
-                  <span className="flex items-center" style={{ gap: 3, fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}><Clock size={11} />{r.minutes}m</span>
-                </div>
-                <div className="flex" style={{ gap: 5, marginTop: 6, flexWrap: "wrap" }}>
-                  {r.tags.slice(0, 3).map((t) => <span key={t} style={tagStyle}>{t}</span>)}
-                </div>
-              </div>
-            </button>
-          ))}
-          {!list.length && <Empty text="No recipes match that filter." />}
+          {customMatches.length > 0 && onlyMine === false && recents.length + popular.length > 0 && sectionHeader("MY RECIPES")}
+          {customMatches.map((r) => recipeRow(r, () => openRecipe(r.id)))}
+          {recents.length > 0 && sectionHeader("RECENTLY USED")}
+          {recents.map((r) => recipeRow(r, () => openRecipe(r.id)))}
+          {popular.length > 0 && sectionHeader(q ? "RESULTS" : "POPULAR")}
+          {popular.map((r) => recipeRow(r, () => openRecipe(r.id)))}
+          {spBusy && !onlyMine && (
+            <div className="flex items-center" style={{ gap: 8, padding: "12px 4px", color: C.inkSoft, fontSize: 13, fontWeight: 600 }}>
+              <Loader2 size={16} className="pl-spin" /> Searching recipes…
+            </div>
+          )}
+          {spError && !onlyMine && <div style={errBox}>{spError}</div>}
+          {!spBusy && nothing && !spError && <Empty text={q ? "No recipes found — try another search." : "Search for a recipe above."} />}
         </div>
       </div>
     );
   };
+
+  // Shared recipe list row (photo or emoji thumb + macros), used on the Recipes
+  // screen and in the plan / log pickers.
+  const recipeRow = (r, onClick) => (
+    <button key={r.id} onClick={onClick} style={{ ...cardStyle, width: "100%", textAlign: "left", cursor: "pointer", display: "flex", gap: 12, alignItems: "center" }}>
+      {r.image
+        ? <img src={r.image} alt="" loading="lazy" style={{ width: 56, height: 56, borderRadius: 14, objectFit: "cover", flexShrink: 0, background: r.bg }} />
+        : <div style={{ width: 56, height: 56, borderRadius: 14, background: r.bg, display: "grid", placeItems: "center", fontSize: 28, flexShrink: 0 }}>{r.emoji}</div>}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <div style={{ fontWeight: 800, color: C.ink, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+          {r.custom && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, color: C.ever2, background: C.leafSoft, borderRadius: 5, padding: "1px 5px", letterSpacing: 0.3 }}>YOURS</span>}
+        </div>
+        <div className="flex items-center" style={{ gap: 8, marginTop: 3 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.apricot, fontVariantNumeric: "tabular-nums" }}>{r.kcal} kcal</span>
+          <span style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>· {r.protein}P / {r.carbs}C / {r.fat}F</span>
+          {r.minutes > 0 && <span className="flex items-center" style={{ gap: 3, fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}><Clock size={11} />{r.minutes}m</span>}
+        </div>
+        {(r.tags || []).length > 0 && (
+          <div className="flex" style={{ gap: 5, marginTop: 6, flexWrap: "wrap" }}>
+            {r.tags.slice(0, 3).map((t) => <span key={t} style={tagStyle}>{t}</span>)}
+          </div>
+        )}
+      </div>
+    </button>
+  );
 
   /* =========================================================================
      SCREEN: GROCERY
@@ -1194,7 +1259,9 @@ function MainApp({ session }) {
     const r = recipeById(modal.id); if (!r) return null;
     return (
       <Sheet open title={r.name} onClose={closeModal} big>
-        <div style={{ height: 120, borderRadius: 18, background: r.bg, display: "grid", placeItems: "center", fontSize: 56, marginBottom: 14 }}>{r.emoji}</div>
+        {r.image
+          ? <img src={r.image} alt={r.name} style={{ width: "100%", height: 150, objectFit: "cover", borderRadius: 18, marginBottom: 14, background: r.bg }} />
+          : <div style={{ height: 120, borderRadius: 18, background: r.bg, display: "grid", placeItems: "center", fontSize: 56, marginBottom: 14 }}>{r.emoji}</div>}
         <div className="flex" style={{ gap: 8, marginBottom: 14 }}>
           {[["kcal", r.kcal, C.apricot], ["Protein", r.protein + "g", C.protein], ["Carbs", r.carbs + "g", C.carbs], ["Fat", r.fat + "g", C.fat]].map(([l, v, col]) => (
             <div key={l} style={{ flex: 1, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 6px", textAlign: "center" }}>
@@ -1496,28 +1563,18 @@ function MainApp({ session }) {
 
   const renderPlanPick = () => {
     const q = recipeSearch.trim().toLowerCase();
-    const list = allRecipes.filter((r) =>
-      (recipeFilter === "All" || r.tags.includes(recipeFilter)) &&
-      (!q || r.name.toLowerCase().includes(q)));
+    const customMatches = (state.recipes || []).filter((r) => !q || r.name.toLowerCase().includes(q));
+    const list = [...customMatches, ...spResults];
     const mealLabel = MEALS.find((m) => m.key === modal.meal)?.label;
     return (
       <Sheet open title={`Add to ${mealLabel} · ${relDay(modal.date)}`} onClose={closeModal} big>
         <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
-        <div className="flex" style={{ gap: 8, padding: "10px 0", overflowX: "auto" }}>
-          {["All", ...GOAL_TAGS].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
+        <div style={{ marginTop: 10 }}>
+          {list.map((r) => recipeRow(r, () => { addToPlan(modal.date, modal.meal, r.id); flash(`Added ${r.name} to plan`); closeModal(); }))}
+          {spBusy && <div className="flex items-center" style={{ gap: 8, padding: "12px 4px", color: C.inkSoft, fontSize: 13, fontWeight: 600 }}><Loader2 size={16} className="pl-spin" /> Searching recipes…</div>}
+          {spError && <div style={errBox}>{spError}</div>}
+          {!spBusy && !list.length && !spError && <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No recipes found.</div>}
         </div>
-        {list.map((r) => (
-          <button key={r.id} onClick={() => { addToPlan(modal.date, modal.meal, r.id); flash(`Added ${r.name} to plan`); closeModal(); }} style={rowBtn}>
-            <div className="flex items-center" style={{ gap: 10, minWidth: 0 }}>
-              <span style={{ width: 40, height: 40, borderRadius: 11, background: r.bg, display: "grid", placeItems: "center", fontSize: 21 }}>{r.emoji}</span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                <div style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>{r.kcal} kcal · {r.protein}P/{r.carbs}C/{r.fat}F</div>
-              </div>
-            </div>
-            <span style={{ ...addBtn, background: C.leafSoft }}><Plus size={15} color={C.ever} /></span>
-          </button>
-        ))}
       </Sheet>
     );
   };
@@ -1571,33 +1628,21 @@ function MainApp({ session }) {
     );
   };
 
-  // Pick a saved recipe to log straight into a diary meal (vs. the meal plan).
+  // Pick a recipe to log straight into a diary meal (vs. the meal plan).
   const renderRecipeLog = () => {
     const q = recipeSearch.trim().toLowerCase();
-    const hasCustom = (state.recipes || []).length > 0;
-    const list = allRecipes.filter((r) =>
-      (recipeFilter === "All" || (recipeFilter === "My recipes" ? r.custom : r.tags.includes(recipeFilter))) &&
-      (!q || r.name.toLowerCase().includes(q)));
+    const customMatches = (state.recipes || []).filter((r) => !q || r.name.toLowerCase().includes(q));
+    const list = [...customMatches, ...spResults];
     const mealLabel = MEALS.find((m) => m.key === modal.meal)?.label;
     return (
       <Sheet open title={`Log recipe to ${mealLabel} · ${relDay(modal.date)}`} onClose={closeModal} big>
         <SearchInput value={recipeSearch} onChange={setRecipeSearch} placeholder="Search recipes" />
-        <div className="flex" style={{ gap: 8, padding: "10px 0", overflowX: "auto" }}>
-          {["All", ...(hasCustom ? ["My recipes"] : []), ...GOAL_TAGS].map((t) => <Pill key={t} active={recipeFilter === t} onClick={() => setRecipeFilter(t)}>{t}</Pill>)}
+        <div style={{ marginTop: 10 }}>
+          {list.map((r) => recipeRow(r, () => { cacheRecipe(r); openLogItem(modal.date, modal.meal, { name: r.name, serving: "1 serving", kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat }, "recipe", { type: "recipelog", date: modal.date, meal: modal.meal }); }))}
+          {spBusy && <div className="flex items-center" style={{ gap: 8, padding: "12px 4px", color: C.inkSoft, fontSize: 13, fontWeight: 600 }}><Loader2 size={16} className="pl-spin" /> Searching recipes…</div>}
+          {spError && <div style={errBox}>{spError}</div>}
+          {!spBusy && !list.length && !spError && <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No recipes found.</div>}
         </div>
-        {list.map((r) => (
-          <button key={r.id} onClick={() => openLogItem(modal.date, modal.meal, { name: r.name, serving: "1 serving", kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat }, "recipe", { type: "recipelog", date: modal.date, meal: modal.meal })} style={rowBtn}>
-            <div className="flex items-center" style={{ gap: 10, minWidth: 0 }}>
-              <span style={{ width: 40, height: 40, borderRadius: 11, background: r.bg, display: "grid", placeItems: "center", fontSize: 21 }}>{r.emoji}</span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                <div style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>{r.kcal} kcal · {r.protein}P/{r.carbs}C/{r.fat}F</div>
-              </div>
-            </div>
-            <span style={{ ...addBtn, background: C.leafSoft }}><Plus size={15} color={C.ever} /></span>
-          </button>
-        ))}
-        {!list.length && <div style={{ padding: "10px 4px", color: C.inkSoft, fontSize: 12.5, fontWeight: 600 }}>No recipes match — create one from the Recipes screen.</div>}
       </Sheet>
     );
   };

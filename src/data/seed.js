@@ -10,167 +10,6 @@ export const MEALS = [
 export const GOAL_TAGS = ["High protein", "Low carb", "Balanced", "Vegetarian", "Quick"];
 
 
-// Recipes: per-serving macros + scalable ingredients
-export const RECIPES = [
-  {
-    id: "r1", name: "Greek Yogurt Power Bowl", emoji: "🥣", bg: "#EAF3DA",
-    tags: ["High protein", "Quick", "Vegetarian"], servings: 1, minutes: 5,
-    kcal: 360, protein: 28, carbs: 41, fat: 9,
-    ingredients: [
-      { name: "Greek yogurt", qty: 1, unit: "cup" },
-      { name: "Blueberries", qty: 0.5, unit: "cup" },
-      { name: "Granola", qty: 0.25, unit: "cup" },
-      { name: "Honey", qty: 1, unit: "tsp" },
-      { name: "Chia seeds", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Spoon yogurt into a bowl.", "Top with blueberries and granola.", "Drizzle honey and sprinkle chia."],
-  },
-  {
-    id: "r2", name: "Veggie Egg Scramble", emoji: "🍳", bg: "#FBE6D6",
-    tags: ["High protein", "Low carb", "Vegetarian", "Quick"], servings: 1, minutes: 12,
-    kcal: 290, protein: 21, carbs: 8, fat: 19,
-    ingredients: [
-      { name: "Eggs", qty: 3, unit: "" },
-      { name: "Spinach", qty: 1, unit: "cup" },
-      { name: "Bell pepper", qty: 0.5, unit: "" },
-      { name: "Cheddar cheese", qty: 1, unit: "slice" },
-      { name: "Olive oil", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Heat oil in a pan.", "Sauté pepper and spinach 2 min.", "Add beaten eggs; scramble.", "Fold in cheese."],
-  },
-  {
-    id: "r3", name: "Overnight Oats & Berries", emoji: "🫐", bg: "#E7EEF6",
-    tags: ["Balanced", "Vegetarian", "Quick"], servings: 1, minutes: 5,
-    kcal: 380, protein: 14, carbs: 58, fat: 11,
-    ingredients: [
-      { name: "Rolled oats", qty: 0.5, unit: "cup" },
-      { name: "Oat milk", qty: 0.75, unit: "cup" },
-      { name: "Blueberries", qty: 0.5, unit: "cup" },
-      { name: "Peanut butter", qty: 1, unit: "tbsp" },
-      { name: "Maple syrup", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Combine oats and oat milk in a jar.", "Stir in peanut butter and syrup.", "Top with berries; chill overnight."],
-  },
-  {
-    id: "r4", name: "Grilled Chicken Caesar", emoji: "🥗", bg: "#EAF3DA",
-    tags: ["High protein", "Low carb"], servings: 2, minutes: 20,
-    kcal: 420, protein: 38, carbs: 14, fat: 23,
-    ingredients: [
-      { name: "Chicken breast", qty: 300, unit: "g" },
-      { name: "Romaine lettuce", qty: 1, unit: "head" },
-      { name: "Parmesan cheese", qty: 0.25, unit: "cup" },
-      { name: "Caesar dressing", qty: 3, unit: "tbsp" },
-      { name: "Croutons", qty: 0.5, unit: "cup" },
-    ],
-    steps: ["Season and grill chicken 6 min/side.", "Chop romaine; toss with dressing.", "Slice chicken over greens.", "Top with parmesan and croutons."],
-  },
-  {
-    id: "r5", name: "Salmon Teriyaki Bowl", emoji: "🐟", bg: "#FBE6D6",
-    tags: ["Balanced", "High protein"], servings: 2, minutes: 25,
-    kcal: 520, protein: 34, carbs: 55, fat: 18,
-    ingredients: [
-      { name: "Salmon fillet", qty: 300, unit: "g" },
-      { name: "Brown rice", qty: 1, unit: "cup" },
-      { name: "Broccoli", qty: 2, unit: "cup" },
-      { name: "Teriyaki sauce", qty: 3, unit: "tbsp" },
-      { name: "Sesame seeds", qty: 1, unit: "tsp" },
-    ],
-    steps: ["Cook rice.", "Roast salmon and broccoli 15 min at 400°F.", "Glaze salmon with teriyaki.", "Assemble bowls; top with sesame."],
-  },
-  {
-    id: "r6", name: "Black Bean Burrito Bowl", emoji: "🌯", bg: "#F3E9D9",
-    tags: ["Vegetarian", "Balanced"], servings: 2, minutes: 18,
-    kcal: 460, protein: 18, carbs: 68, fat: 13,
-    ingredients: [
-      { name: "Black beans", qty: 1, unit: "cup" },
-      { name: "Brown rice", qty: 1, unit: "cup" },
-      { name: "Corn", qty: 0.5, unit: "cup" },
-      { name: "Avocado", qty: 1, unit: "" },
-      { name: "Salsa", qty: 0.5, unit: "cup" },
-      { name: "Lime", qty: 1, unit: "" },
-    ],
-    steps: ["Warm beans and rice.", "Layer into bowls.", "Top with corn, salsa, avocado.", "Squeeze lime over the top."],
-  },
-  {
-    id: "r7", name: "Turkey & Sweet Potato Skillet", emoji: "🍠", bg: "#FBE6D6",
-    tags: ["High protein", "Balanced"], servings: 3, minutes: 25,
-    kcal: 410, protein: 32, carbs: 34, fat: 16,
-    ingredients: [
-      { name: "Ground turkey", qty: 450, unit: "g" },
-      { name: "Sweet potato", qty: 2, unit: "" },
-      { name: "Onion", qty: 1, unit: "" },
-      { name: "Spinach", qty: 2, unit: "cup" },
-      { name: "Olive oil", qty: 1, unit: "tbsp" },
-    ],
-    steps: ["Dice and sauté sweet potato 10 min.", "Add onion and turkey; brown.", "Wilt in spinach.", "Season and serve."],
-  },
-  {
-    id: "r8", name: "Lemon Garlic Shrimp Pasta", emoji: "🍤", bg: "#E7EEF6",
-    tags: ["Balanced"], servings: 2, minutes: 20,
-    kcal: 540, protein: 30, carbs: 62, fat: 18,
-    ingredients: [
-      { name: "Shrimp", qty: 300, unit: "g" },
-      { name: "Spaghetti", qty: 200, unit: "g" },
-      { name: "Garlic", qty: 3, unit: "clove" },
-      { name: "Lemon", qty: 1, unit: "" },
-      { name: "Olive oil", qty: 2, unit: "tbsp" },
-      { name: "Parsley", qty: 0.25, unit: "cup" },
-    ],
-    steps: ["Boil pasta.", "Sauté garlic in oil; add shrimp 3 min.", "Toss with pasta and lemon.", "Finish with parsley."],
-  },
-  {
-    id: "r9", name: "Tofu Veggie Stir-Fry", emoji: "🍲", bg: "#EAF3DA",
-    tags: ["Vegetarian", "Low carb"], servings: 2, minutes: 18,
-    kcal: 330, protein: 22, carbs: 22, fat: 17,
-    ingredients: [
-      { name: "Firm tofu", qty: 300, unit: "g" },
-      { name: "Broccoli", qty: 2, unit: "cup" },
-      { name: "Bell pepper", qty: 1, unit: "" },
-      { name: "Soy sauce", qty: 2, unit: "tbsp" },
-      { name: "Sesame oil", qty: 1, unit: "tbsp" },
-    ],
-    steps: ["Press and cube tofu; pan-fry until golden.", "Add vegetables; stir-fry 5 min.", "Add soy sauce and sesame oil.", "Toss and serve."],
-  },
-  {
-    id: "r10", name: "Steak & Roasted Veg", emoji: "🥩", bg: "#F3E9D9",
-    tags: ["High protein", "Low carb"], servings: 2, minutes: 30,
-    kcal: 480, protein: 40, carbs: 16, fat: 28,
-    ingredients: [
-      { name: "Sirloin steak", qty: 300, unit: "g" },
-      { name: "Asparagus", qty: 1, unit: "bunch" },
-      { name: "Cherry tomatoes", qty: 1, unit: "cup" },
-      { name: "Olive oil", qty: 1, unit: "tbsp" },
-      { name: "Garlic", qty: 2, unit: "clove" },
-    ],
-    steps: ["Roast veg with oil and garlic 18 min.", "Sear steak 4 min/side.", "Rest 5 min; slice.", "Plate with vegetables."],
-  },
-  {
-    id: "r11", name: "Vanilla Protein Smoothie", emoji: "🥤", bg: "#FBE6D6",
-    tags: ["Quick", "High protein"], servings: 1, minutes: 4,
-    kcal: 300, protein: 30, carbs: 34, fat: 5,
-    ingredients: [
-      { name: "Protein powder", qty: 1, unit: "scoop" },
-      { name: "Banana", qty: 1, unit: "" },
-      { name: "Oat milk", qty: 1, unit: "cup" },
-      { name: "Peanut butter", qty: 1, unit: "tbsp" },
-    ],
-    steps: ["Add everything to a blender.", "Blend until smooth.", "Pour and enjoy."],
-  },
-  {
-    id: "r12", name: "Chickpea Mediterranean Salad", emoji: "🥙", bg: "#EAF3DA",
-    tags: ["Vegetarian", "Balanced", "Quick"], servings: 2, minutes: 12,
-    kcal: 390, protein: 15, carbs: 44, fat: 18,
-    ingredients: [
-      { name: "Chickpeas", qty: 1, unit: "cup" },
-      { name: "Cucumber", qty: 1, unit: "" },
-      { name: "Cherry tomatoes", qty: 1, unit: "cup" },
-      { name: "Feta cheese", qty: 0.5, unit: "cup" },
-      { name: "Olive oil", qty: 2, unit: "tbsp" },
-      { name: "Lemon", qty: 1, unit: "" },
-    ],
-    steps: ["Chop cucumber and tomatoes.", "Combine with chickpeas and feta.", "Dress with oil and lemon.", "Season and toss."],
-  },
-];
 
 // Searchable food database (per listed serving)
 export const FOODS = [
@@ -258,14 +97,9 @@ export const seedDiary = () => {
   };
 };
 
-export const seedPlan = () => {
-  const t = todayISO();
-  return {
-    [t]: { breakfast: ["r1"], lunch: ["r4"], dinner: ["r5"], snack: ["r11"] },
-    [addDays(t, 1)]: { breakfast: ["r3"], lunch: ["r12"], dinner: ["r10"], snack: [] },
-    [addDays(t, 2)]: { breakfast: ["r2"], lunch: ["r6"], dinner: ["r9"], snack: [] },
-  };
-};
+// Recipes are no longer seeded (they come from Spoonacular), so the demo plan
+// starts empty — there are no built-in recipe IDs to reference.
+export const seedPlan = () => ({});
 
 export const initialState = {
   goals: { kcal: 2100, protein: 150, carbs: 210, fat: 65 },
@@ -275,7 +109,8 @@ export const initialState = {
   weights: seedWeights(),
   grocery: [], // {id, name, qty, unit, checked, source}
   connected: [], // provider ids "connected" in this demo
-  recipes: [], // user-created recipes (merged with the seed RECIPES at runtime)
+  recipes: [], // user-created recipes
+  recipeCache: [], // Spoonacular recipes the user has referenced (for plan lookups)
 };
 
 // Pastel card backgrounds + a starter emoji set for the recipe builder.
