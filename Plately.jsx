@@ -17,7 +17,7 @@ import {
   mondayOf, relDay, mealByHour, uid, sumEntries, dayTotals, recipeToEntry,
   fmtQty, extractJSON,
 } from "./src/lib/helpers";
-import { callClaude, lookupBarcode, searchUSDA, parseNutritionix, searchSpoonacular } from "./src/lib/api";
+import { callClaude, lookupBarcode, searchUSDA, parseNutritionix, searchRecipes } from "./src/lib/api";
 import { supabase } from "./src/lib/supabase";
 import {
   MEALS, GOAL_TAGS, FOODS, CAT, categoryOf, CAT_ORDER, catEmoji,
@@ -57,10 +57,12 @@ function MainApp({ session }) {
   // Recipes
   const [recipeFilter, setRecipeFilter] = useState("All");
   const [recipeSearch, setRecipeSearch] = useState("");
-  const [spResults, setSpResults] = useState([]); // Spoonacular recipe search results
+  const [spResults, setSpResults] = useState([]); // recipe search results (Spoonacular, or Edamam fallback)
   const [spBusy, setSpBusy] = useState(false);
   const [spError, setSpError] = useState("");
+  const [spSource, setSpSource] = useState("spoonacular"); // which API served the current results
   const [logDraft, setLogDraft] = useState(null); // { date, meal, name, unit, kcal, protein, carbs, fat, servings, kind, source, back }
+  const [editDraft, setEditDraft] = useState(null); // editing an existing diary entry
   const [scanServings, setScanServings] = useState(1);
 
   // modal: { type, ... }
@@ -96,11 +98,11 @@ function MainApp({ session }) {
     if (!onRecipes && !inPicker) return;
     const key = recipeSearch.trim().toLowerCase();
     const cached = spCacheRef.current.get(key);
-    if (cached) { setSpResults(cached); setSpBusy(false); setSpError(""); return; }
+    if (cached) { setSpResults(cached.results); setSpSource(cached.source); setSpBusy(false); setSpError(""); return; }
     setSpBusy(true); setSpError("");
     const t = setTimeout(async () => {
-      try { const r = await searchSpoonacular(recipeSearch.trim()); spCacheRef.current.set(key, r); setSpResults(r); }
-      catch (e) { setSpResults([]); setSpError(/configured/i.test(e?.message || "") ? "Recipe search isn’t set up yet (missing Spoonacular API key on the server)." : "Couldn’t reach the recipe database. Check your connection and try again."); }
+      try { const { results, source } = await searchRecipes(recipeSearch.trim()); spCacheRef.current.set(key, { results, source }); setSpResults(results); setSpSource(source); }
+      catch (e) { setSpResults([]); setSpError(e?.message || "Couldn’t reach the recipe database."); }
       finally { setSpBusy(false); }
     }, 400);
     return () => clearTimeout(t);
@@ -537,11 +539,13 @@ function MainApp({ session }) {
   const commitScan = () => {
     const { date, meal } = modal;
     const s = Math.max(0.5, scanServings || 1);
-    const entry = s === 1 ? scanResult : {
-      ...scanResult,
-      qty: `${fmtServ(s)} × ${scanResult.qty}`,
-      kcal: Math.round(scanResult.kcal * s), protein: Math.round(scanResult.protein * s),
-      carbs: Math.round(scanResult.carbs * s), fat: Math.round(scanResult.fat * s),
+    const base = { kcal: scanResult.kcal, protein: scanResult.protein, carbs: scanResult.carbs, fat: scanResult.fat };
+    const entry = {
+      name: scanResult.name,
+      qty: s === 1 ? scanResult.qty : `${fmtServ(s)} × ${scanResult.qty}`,
+      kcal: Math.round(base.kcal * s), protein: Math.round(base.protein * s),
+      carbs: Math.round(base.carbs * s), fat: Math.round(base.fat * s),
+      base, unit: scanResult.qty, servings: s,
     };
     addEntry(date, meal, entry);
     closeModal(); flash("Logged from scan");
@@ -576,6 +580,18 @@ function MainApp({ session }) {
       kcal: +item.kcal || 0, protein: +item.protein || 0, carbs: +item.carbs || 0, fat: +item.fat || 0, servings: 1,
     });
     setModal({ type: "logitem" });
+  };
+  // Edit an already-logged diary entry: change name, per-serving macros, servings,
+  // meal, or day. Falls back to treating the logged totals as a single serving for
+  // older entries that weren't saved with a per-serving base.
+  const openEditEntry = (date, meal, entry) => {
+    const base = entry.base || { kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0 };
+    setEditDraft({
+      id: entry.id, origDate: date, origMeal: meal, date, meal,
+      name: entry.name, unit: entry.unit || entry.qty || "1 serving", servings: entry.servings || 1,
+      kcal: base.kcal, protein: base.protein, carbs: base.carbs, fat: base.fat,
+    });
+    setModal({ type: "editentry" });
   };
   const fmtServ = (n) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
   // − / value / + control for choosing how many servings to log (0.5 steps).
@@ -730,10 +746,10 @@ function MainApp({ session }) {
                 </div>
                 {items.map((e) => (
                   <div key={e.id} className="flex items-center justify-between" style={{ padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
-                    <div style={{ minWidth: 0 }}>
+                    <button onClick={() => openEditEntry(selDate, m.key, e)} style={{ minWidth: 0, flex: 1, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</div>
                       <div style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>{e.qty} · {e.protein}P / {e.carbs}C / {e.fat}F</div>
-                    </div>
+                    </button>
                     <div className="flex items-center" style={{ gap: 10, flexShrink: 0 }}>
                       <span style={{ fontSize: 14, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{e.kcal}</span>
                       <button onClick={() => removeEntry(selDate, m.key, e.id)} style={trashBtn}><Trash2 size={15} /></button>
@@ -853,6 +869,9 @@ function MainApp({ session }) {
           {recents.length > 0 && sectionHeader("RECENTLY USED")}
           {recents.map((r) => recipeRow(r, () => openRecipe(r.id)))}
           {popular.length > 0 && sectionHeader(q ? "RESULTS" : "POPULAR")}
+          {popular.length > 0 && !onlyMine && spSource === "edamam" && (
+            <div style={{ fontSize: 11, color: C.inkSoft, fontWeight: 600, margin: "-2px 2px 8px" }}>Showing Edamam results (Spoonacular limit reached).</div>
+          )}
           {popular.map((r) => recipeRow(r, () => openRecipe(r.id)))}
           {spBusy && !onlyMine && (
             <div className="flex items-center" style={{ gap: 8, padding: "12px 4px", color: C.inkSoft, fontSize: 13, fontWeight: 600 }}>
@@ -1614,6 +1633,8 @@ function MainApp({ session }) {
         name: d.name,
         qty: s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`,
         kcal: scaled(d.kcal), protein: scaled(d.protein), carbs: scaled(d.carbs), fat: scaled(d.fat),
+        // Keep the per-serving base so the entry can be re-scaled when edited.
+        base: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat }, unit: d.unit, servings: s,
       };
       if (d.kind === "food") recordRecentFood({ name: d.name, serving: d.unit, kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, source: d.source });
       addEntry(d.date, d.meal, entry);
@@ -1646,6 +1667,76 @@ function MainApp({ session }) {
         </div>
 
         <button onClick={logIt} style={{ ...primaryBtn, marginTop: 18 }}><Plus size={16} /> Log to {mealLabel}</button>
+      </Sheet>
+    );
+  };
+
+  // Edit an existing diary entry: name, per-serving macros, servings, meal, day.
+  const renderEditEntry = () => {
+    const d = editDraft; if (!d) return null;
+    const s = Math.max(0.5, d.servings || 1);
+    const set = (patch) => setEditDraft({ ...d, ...patch });
+    const setNum = (k, v) => set({ [k]: Math.max(0, +String(v).replace(/[^\d.]/g, "") || 0) });
+    const scaled = (v) => Math.round(v * s);
+    const save = () => {
+      const entry = {
+        id: d.id, name: d.name.trim() || "Item",
+        qty: s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`,
+        kcal: scaled(d.kcal), protein: scaled(d.protein), carbs: scaled(d.carbs), fat: scaled(d.fat),
+        base: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat }, unit: d.unit, servings: s,
+      };
+      mutate((st) => {
+        ensureDay(st, d.origDate); ensureDay(st, d.date);
+        st.diary[d.origDate][d.origMeal] = st.diary[d.origDate][d.origMeal].filter((e) => e.id !== d.id);
+        st.diary[d.date][d.meal].push(entry);
+      });
+      closeModal(); flash("Entry updated");
+    };
+    const del = () => { removeEntry(d.origDate, d.origMeal, d.id); closeModal(); flash("Entry removed"); };
+    return (
+      <Sheet open title="Edit entry" onClose={closeModal} big>
+        <SectionTitle>Name</SectionTitle>
+        <input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="Name" style={{ ...inputStyle, width: "100%" }} />
+
+        <SectionTitle>Per serving</SectionTitle>
+        <div style={{ ...cardStyle }}>
+          <div className="flex" style={{ gap: 8 }}>
+            {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
+              <div key={k} style={{ flex: 1 }}>
+                <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
+                <input value={d[k]} onChange={(e) => setNum(k, e.target.value)} inputMode="numeric" style={{ ...inputStyle, width: "100%", textAlign: "center", padding: "8px 4px" }} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <SectionTitle>Servings</SectionTitle>
+        {servingStepper(d.servings, (v) => set({ servings: v }))}
+        {s !== 1 && (
+          <div style={{ fontSize: 12, color: C.ever2, fontWeight: 700, textAlign: "center", marginTop: 10 }}>
+            Total: {scaled(d.kcal)} kcal · {scaled(d.protein)}P / {scaled(d.carbs)}C / {scaled(d.fat)}F
+          </div>
+        )}
+
+        <SectionTitle>Meal</SectionTitle>
+        <div className="flex" style={{ gap: 6, flexWrap: "wrap" }}>
+          {MEALS.map((m) => (
+            <Pill key={m.key} active={d.meal === m.key} onClick={() => set({ meal: m.key })}>{m.emoji} {m.label}</Pill>
+          ))}
+        </div>
+
+        <SectionTitle>Day</SectionTitle>
+        <div className="flex items-center justify-between" style={{ ...cardStyle, padding: "10px 12px" }}>
+          <button onClick={() => set({ date: addDays(d.date, -1) })} style={ghostBtn}><ChevronLeft size={18} /></button>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{relDay(d.date)}</div>
+            <div style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 600 }}>{niceDate(d.date)}</div>
+          </div>
+          <button onClick={() => set({ date: addDays(d.date, 1) })} style={ghostBtn}><ChevronRight size={18} /></button>
+        </div>
+
+        <button onClick={save} style={{ ...primaryBtn, marginTop: 18 }}><Check size={16} /> Save changes</button>
+        <button onClick={del} style={{ ...secondaryBtn, marginTop: 10, color: C.fat, borderColor: C.fat }}><Trash2 size={16} /> Delete entry</button>
       </Sheet>
     );
   };
@@ -1946,6 +2037,7 @@ function MainApp({ session }) {
         {modal?.type === "planpick" && renderPlanPick()}
         {modal?.type === "recipelog" && renderRecipeLog()}
         {modal?.type === "logitem" && renderLogItem()}
+        {modal?.type === "editentry" && renderEditEntry()}
         {modal?.type === "delivery" && renderDelivery()}
         {modal?.type === "settings" && renderSettings()}
         {modal?.type === "profile" && renderProfile()}

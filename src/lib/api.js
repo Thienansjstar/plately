@@ -165,6 +165,65 @@ export async function searchSpoonacular(query, number = 20) {
   return (Array.isArray(data.results) ? data.results : []).map(mapSpoonRecipe);
 }
 
+// Edamam Recipe Search API — the fallback recipe source. Its nutrition totals are
+// for the whole recipe, so we divide by `yield` (servings) to match our per-serving shape.
+const mapEdamamRecipe = (r) => {
+  const yld = Math.max(1, Math.round(r.yield || 1));
+  const tn = r.totalNutrients || {};
+  const per = (k) => Math.max(0, Math.round((tn[k]?.quantity || 0) / yld));
+  const ingredients = (r.ingredients || []).map((i) => ({
+    name: i.food || i.text || "",
+    qty: +(+i.quantity || 0).toFixed(2) || 0,
+    unit: i.measure && i.measure !== "<unit>" ? i.measure : "",
+  })).filter((i) => i.name);
+  const idPart = (r.uri || "").split("#recipe_")[1] || uid();
+  return {
+    id: `ed_${idPart}`,
+    name: r.label || "Recipe",
+    image: r.image || "",
+    emoji: "🍽️",
+    bg: RECIPE_BGS[idPart.length % RECIPE_BGS.length],
+    tags: [...new Set([...(r.dishType || []), ...(r.cuisineType || []), ...(r.dietLabels || [])])]
+      .map((t) => t.replace(/\b\w/g, (c) => c.toUpperCase())),
+    servings: yld,
+    minutes: Math.max(0, Math.round(r.totalTime || 0)),
+    kcal: per("ENERC_KCAL"), protein: per("PROCNT"), carbs: per("CHOCDF"), fat: per("FAT"),
+    ingredients,
+    source: "edamam",
+  };
+};
+export async function searchEdamam(query, number = 20) {
+  const res = await fetch("/api/edamam", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, number }),
+  });
+  if (!res.ok) {
+    let msg = `Recipe search failed (${res.status})`;
+    try { const e = await res.json(); msg = (typeof e?.error === "string" ? e.error : e?.message) || msg; } catch {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  const data = await res.json();
+  return (Array.isArray(data.hits) ? data.hits : []).map((h) => mapEdamamRecipe(h.recipe)).filter((r) => r.name);
+}
+
+// Recipe search with automatic failover: Spoonacular first, Edamam when it errors
+// (most importantly a 402 "daily points exhausted"). Returns the source used so
+// the UI can note when results come from the backup.
+export async function searchRecipes(query, number = 20) {
+  try {
+    return { results: await searchSpoonacular(query, number), source: "spoonacular" };
+  } catch (primary) {
+    try {
+      return { results: await searchEdamam(query, number), source: "edamam" };
+    } catch (fallback) {
+      const noKeys = /not configured/i.test(primary?.message || "") && /not configured/i.test(fallback?.message || "");
+      const err = new Error(noKeys ? "Recipe search isn’t set up yet (no recipe API key on the server)." : "Couldn’t reach the recipe database. Check your connection and try again.");
+      throw err;
+    }
+  }
+}
+
 // Natural-language parsing via Nutritionix (through the dev proxy) — used as a
 // fallback when the Claude estimate is unavailable or fails.
 export async function parseNutritionix(text) {

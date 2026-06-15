@@ -20,6 +20,8 @@ export default defineConfig(({ mode }) => {
   const NIX_ID = env.NUTRITIONIX_APP_ID;
   const NIX_KEY = env.NUTRITIONIX_APP_KEY;
   const SPOON = env.SPOONACULAR_API_KEY;
+  const EDAMAM_ID = env.EDAMAM_APP_ID;
+  const EDAMAM_KEY = env.EDAMAM_APP_KEY;
 
   const readBody = async (req) => {
     const chunks = [];
@@ -142,6 +144,21 @@ export default defineConfig(({ mode }) => {
               else u.searchParams.set("sort", "popularity");
               await pipe(res, await fetch(u));
             } catch (e) { sendJson(res, 502, { error: "Spoonacular request failed: " + (e?.message || "unknown error") }); }
+          });
+
+          server.middlewares.use("/api/edamam", async (req, res) => {
+            if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+            if (!EDAMAM_ID || !EDAMAM_KEY) return sendJson(res, 501, { error: "Edamam not configured (set EDAMAM_APP_ID and EDAMAM_APP_KEY in .env)." });
+            try {
+              const { query, number } = JSON.parse((await readBody(req)) || "{}");
+              const u = new URL("https://api.edamam.com/api/recipes/v2");
+              u.searchParams.set("type", "public");
+              u.searchParams.set("q", (query && query.trim()) || "healthy");
+              u.searchParams.set("app_id", EDAMAM_ID);
+              u.searchParams.set("app_key", EDAMAM_KEY);
+              u.searchParams.set("to", String(Math.min(number || 20, 40)));
+              await pipe(res, await fetch(u, { headers: { "Edamam-Account-User": EDAMAM_ID } }));
+            } catch (e) { sendJson(res, 502, { error: "Edamam request failed: " + (e?.message || "unknown error") }); }
           });
         },
       },
