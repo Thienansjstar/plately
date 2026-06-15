@@ -5,7 +5,9 @@ const json = (status, obj) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 
 export async function onRequestPost({ request, env }) {
-  const ID = env.EDAMAM_APP_ID, KEY = env.EDAMAM_APP_KEY;
+  // Trim env keys to tolerate accidental leading/trailing spaces in the CF dashboard.
+  const getEnv = (name) => Object.entries(env).find(([k]) => k.trim() === name)?.[1];
+  const ID = getEnv("EDAMAM_APP_ID"), KEY = getEnv("EDAMAM_APP_KEY");
   if (!ID || !KEY) return json(501, { error: "Edamam not configured (set EDAMAM_APP_ID and EDAMAM_APP_KEY)." });
   let query, number;
   try {
