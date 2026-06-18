@@ -38,6 +38,45 @@ import { AuthScreen } from "./src/components/AuthScreen";
 import { OnboardingScreen, ProfileFields, TargetPreview } from "./src/components/profile";
 import { profileDefaults, recommendedTargets, saveProfileToDB } from "./src/lib/profile";
 
+// Measurement units offered when logging a weight-based food, with their grams
+// per unit. Volume units use a water-density approximation (no per-food density
+// available), so they're rough for solids — weight units are exact.
+const LOG_UNITS = [
+  { id: "g", label: "grams (g)", grams: 1 },
+  { id: "oz", label: "ounces (oz)", grams: 28.3495 },
+  { id: "lb", label: "pounds (lb)", grams: 453.592 },
+  { id: "kg", label: "kilograms (kg)", grams: 1000 },
+  { id: "cup", label: "cups", grams: 240 },
+  { id: "tbsp", label: "tablespoons", grams: 15 },
+  { id: "tsp", label: "teaspoons", grams: 5 },
+  { id: "ml", label: "milliliters (ml)", grams: 1 },
+];
+// Grams in one serving, parsed from a serving string when it's a weight.
+const gramsFromServing = (s) => {
+  if (!s) return null;
+  const g = String(s).match(/([\d.]+)\s*(?:g|grams?)\b/i);
+  if (g) return +g[1];
+  const oz = String(s).match(/([\d.]+)\s*oz\b/i);
+  if (oz) return +oz[1] * 28.3495;
+  return null;
+};
+const fmtAmt = (n) => (Number.isInteger(n) ? String(n) : String(+(+n).toFixed(2)));
+// Grams represented by one unit of `id` (the native serving = baseGrams).
+const unitGramsFor = (id, baseGrams) => (id === "serving" ? baseGrams : (LOG_UNITS.find((u) => u.id === id)?.grams || 1));
+// Scale per-serving `base` macros to a chosen amount + measurement unit.
+const scaleByMeasure = (base, baseGrams, amount, measure) => {
+  const grams = Math.max(0, +amount || 0) * unitGramsFor(measure, baseGrams);
+  const f = baseGrams > 0 ? grams / baseGrams : 0;
+  return { grams, kcal: Math.round((base.kcal || 0) * f), protein: Math.round((base.protein || 0) * f), carbs: Math.round((base.carbs || 0) * f), fat: Math.round((base.fat || 0) * f) };
+};
+// Convert an amount when switching units so the total grams stay the same.
+const convertAmount = (baseGrams, amount, fromId, toId) => {
+  const cur = (+amount || 0) * unitGramsFor(fromId, baseGrams);
+  const tg = unitGramsFor(toId, baseGrams);
+  const v = tg ? +(cur / tg).toFixed(2) : 1;
+  return v > 0 ? v : 1;
+};
+
 /* ============================================================================
    MAIN APP
 ============================================================================ */
@@ -321,7 +360,7 @@ function MainApp({ session }) {
   // Remember a food picked from search so it surfaces at the top next time
   // (most-recent first, deduped by name, capped).
   const recordRecentFood = (f) => mutate((s) => {
-    const item = { id: f.id || `r_${uid()}`, name: f.name, serving: f.serving || f.qty || "1 serving", kcal: f.kcal || 0, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0, source: f.source };
+    const item = { id: f.id || `r_${uid()}`, name: f.name, serving: f.serving || f.qty || "1 serving", grams: f.grams ?? null, kcal: f.kcal || 0, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0, source: f.source };
     const rest = (s.recentFoods || []).filter((x) => x.name.toLowerCase() !== item.name.toLowerCase());
     s.recentFoods = [item, ...rest].slice(0, 12);
   });
@@ -536,6 +575,7 @@ function MainApp({ session }) {
       }
     } finally { setScanBusy(false); }
   };
+  // Meal photo: log directly, scaled by the estimated servings-in-photo.
   const commitScan = () => {
     const { date, meal } = modal;
     const s = Math.max(0.5, scanServings || 1);
@@ -545,10 +585,20 @@ function MainApp({ session }) {
       qty: s === 1 ? scanResult.qty : `${fmtServ(s)} × ${scanResult.qty}`,
       kcal: Math.round(base.kcal * s), protein: Math.round(base.protein * s),
       carbs: Math.round(base.carbs * s), fat: Math.round(base.fat * s),
-      base, unit: scanResult.qty, servings: s,
+      base, unit: scanResult.qty, servings: s, log: { kind: "serving", base, unit: scanResult.qty, servings: s },
     };
     addEntry(date, meal, entry);
     closeModal(); flash("Logged from scan");
+  };
+  // Label / barcode: hand the (reviewed) result to the unified log sheet so the
+  // user gets the amount + measurement-unit picker, same as a database food.
+  const scanToLogItem = () => {
+    const { date, meal } = modal;
+    openLogItem(date, meal, {
+      name: scanResult.name, serving: scanResult.qty,
+      kcal: scanResult.kcal, protein: scanResult.protein, carbs: scanResult.carbs, fat: scanResult.fat,
+      source: scanMode === "barcode" ? "Open Food Facts" : "scan",
+    }, "food", null);
   };
 
   /* ---- delivery sync (simulated) ---- */
@@ -575,9 +625,18 @@ function MainApp({ session }) {
   // Universal "log with servings" confirm step. `item` carries per-serving macros;
   // `back` is the modal to return to (so list flows keep going).
   const openLogItem = (date, meal, item, kind, back = null) => {
+    const unitLabel = item.serving || item.qty || "1 serving";
+    // Every food gets the amount + measurement-unit picker. When we know the
+    // serving's real gram weight, weight units are exact; otherwise we fall back
+    // to a 100 g basis so the picker still works (the "serving" unit stays exact
+    // because the basis cancels out — only weight/volume units are then estimates).
+    const realGrams = kind === "food" ? (item.grams ?? gramsFromServing(unitLabel)) : null;
+    const gramsKnown = !!(realGrams && realGrams > 0);
+    const baseGrams = kind === "food" ? (gramsKnown ? realGrams : 100) : null;
     setLogDraft({
-      date, meal, kind, back, name: item.name, unit: item.serving || item.qty || "1 serving", source: item.source,
-      kcal: +item.kcal || 0, protein: +item.protein || 0, carbs: +item.carbs || 0, fat: +item.fat || 0, servings: 1,
+      date, meal, kind, back, name: item.name, unit: unitLabel, source: item.source,
+      kcal: +item.kcal || 0, protein: +item.protein || 0, carbs: +item.carbs || 0, fat: +item.fat || 0,
+      servings: 1, baseGrams, gramsKnown, amount: 1, measure: "serving",
     });
     setModal({ type: "logitem" });
   };
@@ -585,12 +644,24 @@ function MainApp({ session }) {
   // meal, or day. Falls back to treating the logged totals as a single serving for
   // older entries that weren't saved with a per-serving base.
   const openEditEntry = (date, meal, entry) => {
-    const base = entry.base || { kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0 };
-    setEditDraft({
-      id: entry.id, origDate: date, origMeal: meal, date, meal,
-      name: entry.name, unit: entry.unit || entry.qty || "1 serving", servings: entry.servings || 1,
-      kcal: base.kcal, protein: base.protein, carbs: base.carbs, fat: base.fat,
-    });
+    const log = entry.log;
+    if (log && log.kind === "food" && log.baseGrams > 0) {
+      // Weight-based entry → reopen the amount + measurement-unit picker.
+      setEditDraft({
+        id: entry.id, origDate: date, origMeal: meal, date, meal, name: entry.name, mode: "weight",
+        kcal: log.base.kcal, protein: log.base.protein, carbs: log.base.carbs, fat: log.base.fat,
+        baseGrams: log.baseGrams, gramsKnown: log.gramsKnown, unit: log.unit,
+        amount: log.amount ?? 1, measure: log.measure ?? "serving",
+      });
+    } else {
+      // Recipe / legacy / scan entry → editable per-serving macros + servings.
+      const base = (log && log.base) || entry.base || { kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0 };
+      setEditDraft({
+        id: entry.id, origDate: date, origMeal: meal, date, meal, name: entry.name, mode: "servings",
+        unit: (log && log.unit) || entry.unit || entry.qty || "1 serving", servings: (log && log.servings) || entry.servings || 1,
+        kcal: base.kcal, protein: base.protein, carbs: base.carbs, fat: base.fat,
+      });
+    }
     setModal({ type: "editentry" });
   };
   const fmtServ = (n) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
@@ -641,7 +712,7 @@ function MainApp({ session }) {
     return (
       <div>
         {/* evergreen hero */}
-        <div style={{ background: `linear-gradient(160deg, ${C.ever} 0%, ${C.ever2} 100%)`, padding: "16px 18px 26px", color: "#fff", position: "relative" }}>
+        <div style={{ background: `linear-gradient(160deg, ${C.ever} 0%, ${C.ever2} 100%)`, padding: "calc(env(safe-area-inset-top) + 16px) 18px 26px", color: "#fff", position: "relative" }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
@@ -1271,14 +1342,20 @@ function MainApp({ session }) {
                 : scanMode === "product" ? "Read from the label — values are per serving; adjust if needed."
                 : "Estimated per serving. Plately also guessed how many servings are in your photo below — adjust if it looks off."}
             </p>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.inkSoft, textAlign: "center", margin: "14px 0 8px" }}>{scanMode === "meal" ? "Servings in photo" : "Servings"}</div>
-            {servingStepper(scanServings, setScanServings)}
-            {scanServings !== 1 && (
-              <div style={{ fontSize: 12, color: C.ever2, fontWeight: 700, textAlign: "center", marginTop: 10 }}>
-                Total: {Math.round(scanResult.kcal * scanServings)} kcal · {Math.round(scanResult.protein * scanServings)}P / {Math.round(scanResult.carbs * scanServings)}C / {Math.round(scanResult.fat * scanServings)}F
-              </div>
+            {scanMode === "meal" ? (
+              <>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: C.inkSoft, textAlign: "center", margin: "14px 0 8px" }}>Servings in photo</div>
+                {servingStepper(scanServings, setScanServings)}
+                {scanServings !== 1 && (
+                  <div style={{ fontSize: 12, color: C.ever2, fontWeight: 700, textAlign: "center", marginTop: 10 }}>
+                    Total: {Math.round(scanResult.kcal * scanServings)} kcal · {Math.round(scanResult.protein * scanServings)}P / {Math.round(scanResult.carbs * scanServings)}C / {Math.round(scanResult.fat * scanServings)}F
+                  </div>
+                )}
+                <button onClick={commitScan} style={{ ...primaryBtn, marginTop: 14 }}><Check size={16} /> Log to {mealLabel}</button>
+              </>
+            ) : (
+              <button onClick={scanToLogItem} style={{ ...primaryBtn, marginTop: 14 }}>Continue — choose amount <ArrowRight size={16} /></button>
             )}
-            <button onClick={commitScan} style={{ ...primaryBtn, marginTop: 14 }}><Check size={16} /> Log to {mealLabel}</button>
           </div>
         )}
       </Sheet>
@@ -1620,34 +1697,55 @@ function MainApp({ session }) {
     );
   };
 
-  // Confirm a log with a servings multiplier; scales macros and the meal choice.
+  // Confirm a log. Weight-based foods get an amount + measurement-unit picker
+  // (grams/oz/lb/cups…) that scales macros from the food's per-gram values;
+  // everything else uses a simple servings multiplier.
   const renderLogItem = () => {
     const d = logDraft; if (!d) return null;
-    const s = Math.max(0.5, d.servings || 1);
-    const setServings = (v) => setLogDraft({ ...d, servings: v });
-    const scaled = (v) => Math.round(v * s);
+    const byWeight = d.baseGrams > 0;
+    const base = { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat };
     const mealLabel = MEALS.find((m) => m.key === d.meal)?.label;
     const back = () => setModal(d.back || null);
+
+    const m = byWeight ? scaleByMeasure(base, d.baseGrams, d.amount, d.measure) : null;
+    const selGrams = byWeight ? m.grams : 0;
+    const totals = byWeight
+      ? { kcal: m.kcal, protein: m.protein, carbs: m.carbs, fat: m.fat }
+      : (() => { const s = Math.max(0.5, d.servings || 1); return { kcal: Math.round(d.kcal * s), protein: Math.round(d.protein * s), carbs: Math.round(d.carbs * s), fat: Math.round(d.fat * s) }; })();
+    const measureLabel = d.measure === "serving" ? "serving" : d.measure;
+    const setMeasure = (id) => setLogDraft({ ...d, measure: id, amount: convertAmount(d.baseGrams, d.amount, d.measure, id) });
+
     const logIt = () => {
+      const s = Math.max(0.5, d.servings || 1);
+      const qty = byWeight
+        ? `${fmtAmt(d.amount)} ${measureLabel}`
+        : (s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`);
       const entry = {
-        name: d.name,
-        qty: s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`,
-        kcal: scaled(d.kcal), protein: scaled(d.protein), carbs: scaled(d.carbs), fat: scaled(d.fat),
-        // Keep the per-serving base so the entry can be re-scaled when edited.
-        base: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat }, unit: d.unit, servings: s,
+        name: d.name, qty,
+        kcal: totals.kcal, protein: totals.protein, carbs: totals.carbs, fat: totals.fat,
+        base: { ...totals }, unit: qty, servings: 1,
+        // Full measurement context so the entry can be re-scaled in the Edit sheet.
+        log: byWeight
+          ? { kind: "food", base, baseGrams: d.baseGrams, gramsKnown: d.gramsKnown, unit: d.unit, amount: +d.amount || 0, measure: d.measure }
+          : { kind: "serving", base, unit: d.unit, servings: s },
       };
-      if (d.kind === "food") recordRecentFood({ name: d.name, serving: d.unit, kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, source: d.source });
+      if (d.kind === "food") recordRecentFood({ name: d.name, serving: d.unit, grams: d.gramsKnown ? d.baseGrams : null, kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, source: d.source });
       addEntry(d.date, d.meal, entry);
       flash(`Logged ${d.name}`);
       setModal(d.back || null);
     };
+
     return (
       <Sheet open title="Log item" onClose={back}>
         <div style={{ ...cardStyle, padding: 14 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 2 }}>{d.name}</div>
-          <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginBottom: 12 }}>{d.unit} each</div>
+          <div style={{ fontSize: 12, color: C.inkSoft, fontWeight: 600, marginBottom: 12 }}>
+            {byWeight
+              ? `${d.gramsKnown && selGrams ? `${Math.round(selGrams)} g · ` : ""}${d.kcal} kcal per ${d.unit}`
+              : `${d.unit} each`}
+          </div>
           <div className="flex" style={{ gap: 8 }}>
-            {[["kcal", scaled(d.kcal), C.apricot], ["P", scaled(d.protein), C.protein], ["C", scaled(d.carbs), C.carbs], ["F", scaled(d.fat), C.fat]].map(([l, v, col]) => (
+            {[["kcal", totals.kcal, C.apricot], ["P", totals.protein, C.protein], ["C", totals.carbs, C.carbs], ["F", totals.fat, C.fat]].map(([l, v, col]) => (
               <div key={l} style={{ flex: 1, textAlign: "center", background: "#FAF9F3", borderRadius: 10, padding: "8px 4px" }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums" }}>{v}</div>
                 <div style={{ fontSize: 10, color: C.inkSoft, fontWeight: 700 }}>{l}</div>
@@ -1656,8 +1754,30 @@ function MainApp({ session }) {
           </div>
         </div>
 
-        <SectionTitle>Servings</SectionTitle>
-        {servingStepper(d.servings, setServings)}
+        {byWeight ? (
+          <>
+            <SectionTitle>Amount</SectionTitle>
+            <div className="flex" style={{ gap: 8 }}>
+              <input value={d.amount} onChange={(e) => setLogDraft({ ...d, amount: e.target.value.replace(/[^\d.]/g, "") })}
+                inputMode="decimal" style={{ ...inputStyle, width: 96, textAlign: "center", fontSize: 17, fontWeight: 800 }} />
+              <select value={d.measure} onChange={(e) => setMeasure(e.target.value)}
+                style={{ ...inputStyle, flex: 1, cursor: "pointer", appearance: "auto", WebkitAppearance: "menulist" }}>
+                <option value="serving">serving ({d.unit})</option>
+                {LOG_UNITS.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
+              </select>
+            </div>
+            <p style={{ fontSize: 11, color: C.inkSoft, fontWeight: 600, margin: "6px 2px 0", lineHeight: 1.4 }}>
+              {d.gramsKnown
+                ? "Weight units are exact; cups/spoons are approximate (no density data)."
+                : "The serving amount is exact; other units are estimates for this food."}
+            </p>
+          </>
+        ) : (
+          <>
+            <SectionTitle>Servings</SectionTitle>
+            {servingStepper(d.servings, (v) => setLogDraft({ ...d, servings: v }))}
+          </>
+        )}
 
         <SectionTitle>Meal</SectionTitle>
         <div className="flex" style={{ gap: 6, flexWrap: "wrap" }}>
@@ -1671,19 +1791,28 @@ function MainApp({ session }) {
     );
   };
 
-  // Edit an existing diary entry: name, per-serving macros, servings, meal, day.
+  // Edit an existing diary entry: name, amount/unit (or servings), meal, day.
   const renderEditEntry = () => {
     const d = editDraft; if (!d) return null;
-    const s = Math.max(0.5, d.servings || 1);
     const set = (patch) => setEditDraft({ ...d, ...patch });
+    const weight = d.mode === "weight";
+    const base = { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat };
+    const s = Math.max(0.5, d.servings || 1);
+    const totals = weight
+      ? scaleByMeasure(base, d.baseGrams, d.amount, d.measure)
+      : { kcal: Math.round(d.kcal * s), protein: Math.round(d.protein * s), carbs: Math.round(d.carbs * s), fat: Math.round(d.fat * s) };
+    const measureLabel = d.measure === "serving" ? "serving" : d.measure;
     const setNum = (k, v) => set({ [k]: Math.max(0, +String(v).replace(/[^\d.]/g, "") || 0) });
-    const scaled = (v) => Math.round(v * s);
+    const setMeasure = (id) => set({ measure: id, amount: convertAmount(d.baseGrams, d.amount, d.measure, id) });
     const save = () => {
+      const qty = weight ? `${fmtAmt(d.amount)} ${measureLabel}` : (s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`);
       const entry = {
-        id: d.id, name: d.name.trim() || "Item",
-        qty: s === 1 ? d.unit : `${fmtServ(s)} × ${d.unit}`,
-        kcal: scaled(d.kcal), protein: scaled(d.protein), carbs: scaled(d.carbs), fat: scaled(d.fat),
-        base: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat }, unit: d.unit, servings: s,
+        id: d.id, name: d.name.trim() || "Item", qty,
+        kcal: totals.kcal, protein: totals.protein, carbs: totals.carbs, fat: totals.fat,
+        base: { kcal: totals.kcal, protein: totals.protein, carbs: totals.carbs, fat: totals.fat }, unit: qty, servings: 1,
+        log: weight
+          ? { kind: "food", base, baseGrams: d.baseGrams, gramsKnown: d.gramsKnown, unit: d.unit, amount: +d.amount || 0, measure: d.measure }
+          : { kind: "serving", base, unit: d.unit, servings: s },
       };
       mutate((st) => {
         ensureDay(st, d.origDate); ensureDay(st, d.date);
@@ -1698,24 +1827,48 @@ function MainApp({ session }) {
         <SectionTitle>Name</SectionTitle>
         <input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="Name" style={{ ...inputStyle, width: "100%" }} />
 
-        <SectionTitle>Per serving</SectionTitle>
-        <div style={{ ...cardStyle }}>
-          <div className="flex" style={{ gap: 8 }}>
-            {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
-              <div key={k} style={{ flex: 1 }}>
-                <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
-                <input value={d[k]} onChange={(e) => setNum(k, e.target.value)} inputMode="numeric" style={{ ...inputStyle, width: "100%", textAlign: "center", padding: "8px 4px" }} />
+        {weight ? (
+          <>
+            <SectionTitle>Amount</SectionTitle>
+            <div className="flex" style={{ gap: 8 }}>
+              <input value={d.amount} onChange={(e) => set({ amount: e.target.value.replace(/[^\d.]/g, "") })} inputMode="decimal" style={{ ...inputStyle, width: 96, textAlign: "center", fontSize: 17, fontWeight: 800 }} />
+              <select value={d.measure} onChange={(e) => setMeasure(e.target.value)} style={{ ...inputStyle, flex: 1, cursor: "pointer", appearance: "auto", WebkitAppearance: "menulist" }}>
+                <option value="serving">serving ({d.unit})</option>
+                {LOG_UNITS.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
+              </select>
+            </div>
+            <div style={{ ...cardStyle, marginTop: 10, padding: 12 }}>
+              <div className="flex" style={{ gap: 8 }}>
+                {[["kcal", totals.kcal, C.apricot], ["P", totals.protein, C.protein], ["C", totals.carbs, C.carbs], ["F", totals.fat, C.fat]].map(([l, v, col]) => (
+                  <div key={l} style={{ flex: 1, textAlign: "center" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: col, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                    <div style={{ fontSize: 10, color: C.inkSoft, fontWeight: 700 }}>{l}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-
-        <SectionTitle>Servings</SectionTitle>
-        {servingStepper(d.servings, (v) => set({ servings: v }))}
-        {s !== 1 && (
-          <div style={{ fontSize: 12, color: C.ever2, fontWeight: 700, textAlign: "center", marginTop: 10 }}>
-            Total: {scaled(d.kcal)} kcal · {scaled(d.protein)}P / {scaled(d.carbs)}C / {scaled(d.fat)}F
-          </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <SectionTitle>Per serving</SectionTitle>
+            <div style={{ ...cardStyle }}>
+              <div className="flex" style={{ gap: 8 }}>
+                {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, lbl]) => (
+                  <div key={k} style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10.5, color: C.inkSoft, fontWeight: 700, textAlign: "center", marginBottom: 3 }}>{lbl}</div>
+                    <input value={d[k]} onChange={(e) => setNum(k, e.target.value)} inputMode="numeric" style={{ ...inputStyle, width: "100%", textAlign: "center", padding: "8px 4px" }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <SectionTitle>Servings</SectionTitle>
+            {servingStepper(d.servings, (v) => set({ servings: v }))}
+            {s !== 1 && (
+              <div style={{ fontSize: 12, color: C.ever2, fontWeight: 700, textAlign: "center", marginTop: 10 }}>
+                Total: {totals.kcal} kcal · {totals.protein}P / {totals.carbs}C / {totals.fat}F
+              </div>
+            )}
+          </>
         )}
 
         <SectionTitle>Meal</SectionTitle>

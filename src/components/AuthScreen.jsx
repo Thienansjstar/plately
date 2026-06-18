@@ -7,6 +7,21 @@ import { Utensils, Loader2, User, ArrowRight, ArrowLeft, Mail, Lock, Eye, EyeOff
 
 const emailOk = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
+// Brand logos — lucide ships neither, so inline the official marks.
+const GoogleIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true">
+    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+  </svg>
+);
+const AppleIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 384 512" fill="currentColor" aria-hidden="true">
+    <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+  </svg>
+);
+
 // Map Supabase's terse error strings to something a person can act on.
 const friendlyError = (msg = "") => {
   const m = msg.toLowerCase();
@@ -47,6 +62,25 @@ export function AuthScreen() {
   const [tried, setTried] = useState(false); // show validation only after a submit attempt
 
   const switchMode = (m) => { setMode(m); setErr(""); setInfo(""); setTried(false); };
+
+  // OAuth (Google / Apple). On success the browser redirects to the provider and
+  // back to our origin, where supabase-js detects the session and the auth-state
+  // listener swaps in the app — so we never reset `busy` on the success path.
+  const oauth = async (provider) => {
+    if (busy) return;
+    if (!supabase) { setInfo("Preview mode — add your Supabase keys to .env to enable real accounts."); return; }
+    setBusy(true); setErr(""); setInfo("");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) throw error;
+    } catch (e2) {
+      setErr(friendlyError(e2?.message || ""));
+      setBusy(false);
+    }
+  };
 
   const badEmail = tried && !emailOk(email);
   const badPw = tried && mode === "signup" && pw.length < 6;
@@ -95,6 +129,7 @@ export function AuthScreen() {
   };
 
   const heading = mode === "reset" ? "Reset your password" : mode === "signup" ? "Create your account" : "Welcome back";
+  const oauthBtn = { width: "100%", padding: "11px", borderRadius: 13, border: `1.5px solid ${C.line}`, background: C.surface, color: C.ink, fontWeight: 700, fontSize: 13.5, fontFamily: FONT, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, opacity: busy ? 0.6 : 1 };
 
   return centerFrame(
     <div className="pl-app" style={{ width: "100%", maxWidth: 400, padding: "0 22px" }}>
@@ -131,6 +166,24 @@ export function AuthScreen() {
         <div style={{ fontSize: 12.5, color: C.inkSoft, fontWeight: 600, marginBottom: 16, lineHeight: 1.4 }}>
           {mode === "reset" ? "Enter your email and we'll send a link to set a new password." : mode === "signup" ? "A few seconds to set up — your data syncs everywhere." : "Sign in to pick up where you left off."}
         </div>
+
+        {mode !== "reset" && (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 16 }}>
+              <button type="button" onClick={() => oauth("google")} disabled={busy} style={oauthBtn}>
+                <GoogleIcon /> Continue with Google
+              </button>
+              <button type="button" onClick={() => oauth("apple")} disabled={busy} style={{ ...oauthBtn, background: "#000", color: "#fff", border: "none" }}>
+                <AppleIcon /> Continue with Apple
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, height: 1, background: C.line }} />
+              <span style={{ fontSize: 11.5, color: C.inkSoft, fontWeight: 700 }}>or</span>
+              <div style={{ flex: 1, height: 1, background: C.line }} />
+            </div>
+          </>
+        )}
 
         <form onSubmit={submit} noValidate>
           {mode === "signup" && (

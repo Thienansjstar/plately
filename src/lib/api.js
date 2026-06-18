@@ -84,19 +84,23 @@ export async function searchUSDA(query) {
   return foods
     .map((f) => {
       const ln = f.labelNutrients;
-      let kcal, protein, carbs, fat, serving;
+      let kcal, protein, carbs, fat, serving, grams = null;
       if (ln && (ln.calories || ln.protein)) {
         kcal = num(ln.calories?.value);
         protein = num(ln.protein?.value);
         carbs = num(ln.carbohydrates?.value);
         fat = num(ln.fat?.value);
         serving = f.householdServingFullText || (f.servingSize ? `${f.servingSize} ${f.servingSizeUnit || ""}`.trim() : "1 serving");
+        // Gram weight of one serving, if the label gives it in grams.
+        const su = (f.servingSizeUnit || "").toLowerCase();
+        if (f.servingSize && (su === "g" || su === "grm" || su === "gram")) grams = +f.servingSize;
       } else {
         kcal = byNum(f.foodNutrients, ["208", "1008"]);
         protein = byNum(f.foodNutrients, ["203", "1003"]);
         carbs = byNum(f.foodNutrients, ["205", "1005"]);
         fat = byNum(f.foodNutrients, ["204", "1004"]);
-        serving = "100 g";
+        serving = "100 g"; // generic foods are reported per 100 g
+        grams = 100;
       }
       const brand = f.brandName || f.brandOwner;
       const desc = (f.description || "").trim();
@@ -105,6 +109,7 @@ export async function searchUSDA(query) {
         id: "usda-" + (f.fdcId || uid()),
         name: [brand, niceDesc].filter(Boolean).join(" — "),
         serving,
+        grams: grams && grams > 0 ? Math.round(grams) : null,
         kcal: Math.round(kcal),
         protein: Math.round(protein),
         carbs: Math.round(carbs),

@@ -94,7 +94,7 @@ export const TabBtn = ({ t, active, onClick }) => {
 };
 
 export const Header = ({ title, subtitle, right }) => (
-  <div className="flex items-start justify-between" style={{ padding: "18px 18px 12px" }}>
+  <div className="flex items-start justify-between" style={{ padding: "calc(env(safe-area-inset-top) + 18px) 18px 12px" }}>
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 24, fontWeight: 800, color: C.ink, letterSpacing: -0.4 }}>{title}</div>
       {subtitle && <div style={{ fontSize: 13, color: C.inkSoft, fontWeight: 600, marginTop: 2 }}>{subtitle}</div>}
